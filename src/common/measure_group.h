@@ -16,8 +16,8 @@ namespace lightning {
 /// 同步获取的消息
 struct MeasureGroup {
     double timestamp_ = 0;  // scan的开始时间
-    double lidar_begin_time_ = 0;
-    double lidar_end_time_ = 0;
+    double lidar_begin_time_ = 0; // lidar scan 的开始时间
+    double lidar_end_time_ = 0; // lidar scan 的结束时间
 
     std::deque<IMUPtr> imu_;    // 两个scan之间的IMU测量
     std::deque<OdomPtr> odom_;  // 两个scan之间的odom测量

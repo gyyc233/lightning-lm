@@ -30,8 +30,8 @@ double pose2d_relative_z_limit = 0.25;
 }  // namespace lo
 
 namespace fasterlio {
-int NUM_MAX_ITERATIONS = 8;
-float ESTI_PLANE_THRESHOLD = 0.1;
+int NUM_MAX_ITERATIONS = 8; // ESKF最大迭代次数
+float ESTI_PLANE_THRESHOLD = 0.1; // 特征平面估计阈值
 }  // namespace fasterlio
 
 namespace map {

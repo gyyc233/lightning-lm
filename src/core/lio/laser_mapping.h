@@ -28,6 +28,8 @@ class PangolinWindow;
  * 目前有个问题：点云在缓存之后，实际处理的并不是最新的那个点云（通常是buffer里的前一个），这是因为bag里的点云用的开始时间戳，导致
  * 点云的结束时间要比IMU多0.1s左右。为了同步最近的IMU，就只能处理缓冲队列里的那个点云，而不是最新的点云
  */
+
+// 激光雷达建图
 class LaserMapping {
    public:
     struct Options {
@@ -35,7 +37,7 @@ class LaserMapping {
 
         bool is_in_slam_mode_ = true;  // 是否在slam模式下
 
-        /// 关键帧阈值
+        /// 关键帧距离与角度阈值
         double kf_dis_th_ = 2.0;
         double kf_angle_th_ = 15 * M_PI / 180.0;
     };
@@ -58,7 +60,7 @@ class LaserMapping {
     bool Run();
 
     // callbacks of lidar and imu
-    /// 处理ROS2的点云
+    /// 处理ROS2的lidar点云
     void ProcessPointCloud2(const sensor_msgs::msg::PointCloud2::SharedPtr &msg);
 
     /// 处理livox的点云
@@ -99,14 +101,14 @@ class LaserMapping {
     std::vector<Keyframe::Ptr> GetAllKeyframes() { return all_keyframes_; }
 
     /**
-     * 计算全局地图
+     * 计算全局地图,整合所有关键帧的点云数据形成完整的环境地图
      * @param use_lio_pose
      * @return
      */
     CloudPtr GetGlobalMap(bool use_lio_pose, bool use_voxel = true, float res = 0.1);
 
    private:
-    // sync lidar with imu
+    // sync lidar with imu 同步lidar imu数据
     bool SyncPackages();
 
     void ObsModel(NavState &s, ESKF::CustomObservationModel &obs);
@@ -122,6 +124,7 @@ class LaserMapping {
         po.intensity = pi.intensity;
     }
 
+    /// @brief 增量式更新局部地图，将新点添加到iVox地图中
     void MapIncremental();
 
     bool LoadParamsFromYAML(const std::string &yaml);
@@ -139,7 +142,7 @@ class LaserMapping {
     std::shared_ptr<ImuProcess> p_imu_ = nullptr;                 // imu process
 
     /// local map related
-    double filter_size_map_min_ = 0;
+    double filter_size_map_min_ = 0; // 地图最小滤波尺寸
 
     /// params
     std::vector<double> extrinT_{3, 0.0};  // lidar-imu translation

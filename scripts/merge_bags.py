@@ -8,8 +8,12 @@ import zstandard as zstd
 from pathlib import Path
 import shutil
 
+# 处理 ROS1 ROS2 之间数据包管理与转换
 
 def merge_bags(input_bags, output_bag):
+    '''
+    数据包合并
+    '''
     # 初始化写入器
     if os.path.exists(output_bag):
         shutil.rmtree(output_bag)

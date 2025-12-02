@@ -1,3 +1,4 @@
+# 离线运行前端
 add_executable(run_frontend_offline
         run_frontend_offline.cc
 )
@@ -7,6 +8,7 @@ target_link_libraries(run_frontend_offline
         ${third_party_libs}
 )
 
+# 离线循环运行
 add_executable(run_loop_offline
         run_loop_offline.cc
 )
@@ -16,6 +18,7 @@ target_link_libraries(run_loop_offline
         ${third_party_libs}
 )
 
+# 离线SLAM运行
 add_executable(run_slam_offline
         run_slam_offline.cc
 )
@@ -25,6 +28,7 @@ target_link_libraries(run_slam_offline
         ${third_party_libs}
 )
 
+# 在线SLAM运行
 add_executable(run_slam_online
         run_slam_online.cc
 )
@@ -34,6 +38,7 @@ target_link_libraries(run_slam_online
         ${third_party_libs}
 )
 
+# 离线定位
 add_executable(run_loc_offline
         run_loc_offline.cc
 )
@@ -43,6 +48,7 @@ target_link_libraries(run_loc_offline
         ${third_party_libs}
 )
 
+# 在线定位
 add_executable(run_loc_online
         run_loc_online.cc
 )
@@ -52,6 +58,7 @@ target_link_libraries(run_loc_online
         ${third_party_libs}
 )
 
+# 测试UI
 add_executable(test_ui
         test_ui.cc
 )

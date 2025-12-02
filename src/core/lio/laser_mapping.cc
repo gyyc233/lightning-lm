@@ -23,6 +23,8 @@ bool LaserMapping::Init(const std::string &config_yaml) {
     ESKF::Options eskf_options;
     eskf_options.max_iterations_ = fasterlio::NUM_MAX_ITERATIONS;
     eskf_options.epsi_ = 1e-3 * Eigen::Matrix<double, 23, 1>::Ones();
+
+    // 注册激光雷达观测回调
     eskf_options.lidar_obs_func_ = [this](NavState &s, ESKF::CustomObservationModel &obs) { ObsModel(s, obs); };
     eskf_options.use_aa_ = use_aa_;
     kf_.Init(eskf_options);
@@ -34,7 +36,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     // get params from yaml
     int lidar_type, ivox_nearby_type;
     double gyr_cov, acc_cov, b_gyr_cov, b_acc_cov;
-    double filter_size_scan;
+    double filter_size_scan; // 点云降采样空间尺寸
     Vec3d lidar_T_wrt_IMU;
     Mat3d lidar_R_wrt_IMU;
 
@@ -50,21 +52,24 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         acc_cov = yaml["fasterlio"]["acc_cov"].as<float>();
         b_gyr_cov = yaml["fasterlio"]["b_gyr_cov"].as<float>();
         b_acc_cov = yaml["fasterlio"]["b_acc_cov"].as<float>();
-        preprocess_->Blind() = yaml["fasterlio"]["blind"].as<double>();
+
+        preprocess_->Blind() = yaml["fasterlio"]["blind"].as<double>(); // 盲区距离（近距离点会被删除）
         preprocess_->TimeScale() = yaml["fasterlio"]["time_scale"].as<double>();
-        lidar_type = yaml["fasterlio"]["lidar_type"].as<int>();
-        preprocess_->NumScans() = yaml["fasterlio"]["scan_line"].as<int>();
-        preprocess_->PointFilterNum() = yaml["fasterlio"]["point_filter_num"].as<int>();
+        lidar_type = yaml["fasterlio"]["lidar_type"].as<int>(); // 激光雷达类型
+        preprocess_->NumScans() = yaml["fasterlio"]["scan_line"].as<int>(); // 扫描线数量
+        preprocess_->PointFilterNum() = yaml["fasterlio"]["point_filter_num"].as<int>(); // 点云滤波器参数
+
+        // lidar to imu extrinsic RT
         extrinsic_est_en_ = yaml["fasterlio"]["extrinsic_est_en"].as<bool>();
         extrinT_ = yaml["fasterlio"]["extrinsic_T"].as<std::vector<double>>();
         extrinR_ = yaml["fasterlio"]["extrinsic_R"].as<std::vector<double>>();
 
-        ivox_options_.resolution_ = yaml["fasterlio"]["ivox_grid_resolution"].as<float>();
+        ivox_options_.resolution_ = yaml["fasterlio"]["ivox_grid_resolution"].as<float>(); // 网格分辨率
         ivox_nearby_type = yaml["fasterlio"]["ivox_nearby_type"].as<int>();
-        use_aa_ = yaml["fasterlio"]["use_aa"].as<bool>();
+        use_aa_ = yaml["fasterlio"]["use_aa"].as<bool>(); // 启用加速
 
         skip_lidar_num_ = yaml["fasterlio"]["skip_lidar_num"].as<int>();
-        enable_skip_lidar_ = skip_lidar_num_ > 0;
+        enable_skip_lidar_ = skip_lidar_num_ > 0; // 跳过lidar帧数
 
     } catch (...) {
         LOG(ERROR) << "bad conversion";
@@ -147,11 +152,13 @@ void LaserMapping::ProcessIMU(const lightning::IMUPtr &imu) {
 }
 
 bool LaserMapping::Run() {
+    // 同步lidar与imu数据
     if (!SyncPackages()) {
         return false;
     }
 
     /// IMU process, kf prediction, undistortion
+    // imu 数据处理与lidar点云运动畸变矫正
     p_imu_->Process(measures_, kf_, scan_undistort_);
 
     if (scan_undistort_->empty() || (scan_undistort_ == nullptr)) {
@@ -176,6 +183,7 @@ bool LaserMapping::Run() {
         return true;
     }
 
+    // ui 跳帧处理
     if (enable_skip_lidar_) {
         skip_lidar_cnt_++;
         skip_lidar_cnt_ = skip_lidar_cnt_ % skip_lidar_num_;
@@ -194,6 +202,7 @@ bool LaserMapping::Run() {
     // LOG(INFO) << "LIO get cloud at beg: " << std::setprecision(14) << measures_.lidar_begin_time_
     //           << ", end: " << measures_.lidar_end_time_;
 
+    // 雷达断流检测
     if (last_lidar_time_ > 0 && (measures_.lidar_begin_time_ - last_lidar_time_) > 0.5) {
         LOG(ERROR) << "检测到雷达断流，时长：" << (measures_.lidar_begin_time_ - last_lidar_time_);
     }
@@ -202,7 +211,7 @@ bool LaserMapping::Run() {
 
     flg_EKF_inited_ = (measures_.lidar_begin_time_ - first_lidar_time_) >= fasterlio::INIT_TIME;
 
-    /// downsample
+    /// downsample 降采样
     voxel_scan_.setInputCloud(scan_undistort_);
     voxel_scan_.filter(*scan_down_body_);
 
@@ -223,6 +232,7 @@ bool LaserMapping::Run() {
 
             auto old_state = kf_.GetX();
 
+            // IEKF更新
             kf_.Update(ESKF::ObsType::LIDAR, 1e-3);
             state_point_ = kf_.GetX();
 
@@ -242,7 +252,7 @@ bool LaserMapping::Run() {
         },
         "IEKF Solve and Update");
 
-    // update local map
+    // update local map 增量地图更新
     Timer::Evaluate([&, this]() { MapIncremental(); }, "    Incremental Mapping");
 
     LOG(INFO) << "[ mapping ]: In num: " << scan_undistort_->points.size() << " down " << cur_pts
@@ -250,14 +260,16 @@ bool LaserMapping::Run() {
 
     /// keyframes
     if (last_kf_ == nullptr) {
-        MakeKF();
+        MakeKF(); // 创建关键帧
     } else {
         SE3 last_pose = last_kf_->GetLIOPose();
         SE3 cur_pose = state_point_.GetPose();
+        // 满足位移与旋转阈值，则创建关键帧
         if ((last_pose.translation() - cur_pose.translation()).norm() > options_.kf_dis_th_ ||
             (last_pose.so3().inverse() * cur_pose.so3()).log().norm() > options_.kf_angle_th_) {
             MakeKF();
         } else if (!options_.is_in_slam_mode_ && (state_point_.timestamp_ - last_kf_->GetState().timestamp_) > 2.0) {
+            // 间隔时间过长，则创建关键帧
             MakeKF();
         }
     }
@@ -281,19 +293,24 @@ bool LaserMapping::Run() {
 }
 
 void LaserMapping::MakeKF() {
+    // 使用点云数据与状态量创建关键帧
     Keyframe::Ptr kf = std::make_shared<Keyframe>(kf_id_++, scan_undistort_, state_point_);
 
     if (last_kf_) {
+        // 若存在上一个关键帧
         // LOG(INFO) << "last kf lio: " << last_kf_->GetLIOPose().translation().transpose()
         //           << ", opt: " << last_kf_->GetOptPose().translation().transpose();
 
         /// opt pose 用之前的递推
+        // 计算当前关键帧相对于上一关键帧的LIO位姿变换
         SE3 delta = last_kf_->GetLIOPose().inverse() * kf->GetLIOPose();
         kf->SetOptPose(last_kf_->GetOptPose() * delta);
     } else {
+        // 若时第一个关键帧则直接使用LIO位姿作为优化位姿
         kf->SetOptPose(kf->GetLIOPose());
     }
 
+    // 设置关键帧的状态
     kf->SetState(state_point_);
 
     LOG(INFO) << "LIO: create kf " << kf->GetID() << ", state: " << state_point_.pos_.transpose()
@@ -301,6 +318,7 @@ void LaserMapping::MakeKF() {
               << ", lio pose: " << kf->GetLIOPose().translation().transpose() << ", time: " << std::setprecision(14)
               << state_point_.timestamp_;
 
+    // 添加到关键帧列表
     if (options_.is_in_slam_mode_) {
         all_keyframes_.emplace_back(kf);
     }
@@ -323,6 +341,7 @@ void LaserMapping::ProcessPointCloud2(const sensor_msgs::msg::PointCloud2::Share
                       << ", latest imu: " << last_timestamp_imu_;
 
             CloudPtr cloud(new PointCloudType());
+            // ROS点云转PCL点云
             preprocess_->Process(msg, cloud);
 
             lidar_buffer_.push_back(cloud);
@@ -382,16 +401,19 @@ bool LaserMapping::SyncPackages() {
 
     /*** push a lidar scan ***/
     if (!lidar_pushed_) {
+        // 若还没有推送lidar则从缓冲区中取出第一帧点云
         measures_.scan_ = lidar_buffer_.front();
         measures_.lidar_begin_time_ = time_buffer_.front();
 
         if (measures_.scan_->points.size() <= 1) {
+            // 点数太少，使用平均扫描时间估算结束时间
             LOG(WARNING) << "Too few input point cloud!";
             lidar_end_time_ = measures_.lidar_begin_time_ + lidar_mean_scantime_;
         } else if (measures_.scan_->points.back().time / double(1000) < 0.5 * lidar_mean_scantime_) {
             lidar_end_time_ = measures_.lidar_begin_time_ + lidar_mean_scantime_;
         } else {
             scan_num_++;
+            // 根据最后一个点的时间戳计算实际扫描时间
             lidar_end_time_ = measures_.lidar_begin_time_ + measures_.scan_->points.back().time / double(1000);
             lidar_mean_scantime_ +=
                 (measures_.scan_->points.back().time / double(1000) - lidar_mean_scantime_) / scan_num_;
@@ -403,6 +425,7 @@ bool LaserMapping::SyncPackages() {
         lidar_pushed_ = true;
     }
 
+    // imu 时间戳小于lidar时间戳，imu 没有覆盖lidar,需要等待更多imu数据
     if (last_timestamp_imu_ < lidar_end_time_) {
         return false;
     }
@@ -416,6 +439,7 @@ bool LaserMapping::SyncPackages() {
             break;
         }
 
+        // imu_time < lidar_end_time_ （lidar扫描期间的所有imu）将imu buffer中的数据加入测量
         measures_.imu_.push_back(imu_buffer_.front());
 
         imu_buffer_.pop_front();
@@ -423,6 +447,7 @@ bool LaserMapping::SyncPackages() {
 
     lidar_buffer_.pop_front();
     time_buffer_.pop_front();
+    // 重置标志处理下一帧lidar
     lidar_pushed_ = false;
 
     // LOG(INFO) << "sync: " << std::setprecision(14) << measures_.lidar_begin_time_ << ", " <<
@@ -450,14 +475,20 @@ void LaserMapping::MapIncremental() {
 
         /* decide if need add to map */
         PointType &point_world = scan_down_world_->points[i];
+        // 基于空间分布与密度进行筛选
+
+        // 若附近有邻近点且EKF已经初始化
         if (!nearest_points_[i].empty() && flg_EKF_inited_) {
             const PointVector &points_near = nearest_points_[i];
 
+            // 将该lidar点作为中心
             Eigen::Vector3f center =
                 ((point_world.getVector3fMap() / filter_size_map_min_).array().floor() + 0.5) * filter_size_map_min_;
 
+            // 计算邻近点到中心点的距离
             Eigen::Vector3f dis_2_center = points_near[0].getVector3fMap() - center;
 
+            // 若距离较远则舍去
             if (fabs(dis_2_center.x()) > 0.5 * filter_size_map_min_ &&
                 fabs(dis_2_center.y()) > 0.5 * filter_size_map_min_ &&
                 fabs(dis_2_center.z()) > 0.5 * filter_size_map_min_) {
@@ -466,6 +497,7 @@ void LaserMapping::MapIncremental() {
             }
 
             bool need_add = true;
+            // 中心点周围的点密度检查
             float dist = math::calc_dist(point_world.getVector3fMap(), center);
             if (points_near.size() >= fasterlio::NUM_MATCH_POINTS) {
                 for (int readd_i = 0; readd_i < fasterlio::NUM_MATCH_POINTS; readd_i++) {
@@ -509,6 +541,8 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
 
     Timer::Evaluate(
         [&, this]() {
+            // s.rot_: imu在世界下的旋转，offset_R_lidar_: lidar在imu下的旋转
+            // R_wl: lidar世界坐标系下的旋转
             auto R_wl = (s.rot_ * s.offset_R_lidar_).cast<float>();
             auto t_wl = (s.rot_ * s.offset_t_lidar_ + s.pos_).cast<float>();
 
@@ -518,6 +552,7 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
 
                 /* transform to world frame */
                 Vec3f p_body = point_body.getVector3fMap();
+                // scan点转到世界坐标系
                 point_world.getVector3fMap() = R_wl * p_body + t_wl;
                 point_world.intensity = point_body.intensity;
 
@@ -526,8 +561,11 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
 
                 /** Find the closest surfaces in the map **/
                 // if (obs.converge_) {
+                // 对scan点搜索最邻近点
                 ivox_->GetClosestPoint(point_world, points_near, fasterlio::NUM_MATCH_POINTS);
                 point_selected_surf_[i] = points_near.size() >= fasterlio::MIN_NUM_MATCH_POINTS;
+
+                // 对足够多的近邻点进行平面拟合，得到平面参数
                 if (point_selected_surf_[i]) {
                     point_selected_surf_[i] =
                         math::esti_plane(plane_coef_[i], points_near, fasterlio::ESTI_PLANE_THRESHOLD);
@@ -538,6 +576,7 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
                     temp[3] = 1.0;
                     float pd2 = plane_coef_[i].dot(temp);
 
+                    // 通过距离权重验证点-平面对应关系的有效性，过滤不稳定匹配点
                     bool valid_corr = p_body.norm() > 81 * pd2 * pd2;
                     if (valid_corr) {
                         point_selected_surf_[i] = true;
@@ -575,6 +614,7 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
     Timer::Evaluate(
         [&, this]() {
             /*** Computation of Measurement Jacobian matrix H and measurements vector ***/
+            // 计算观测方程的jacobian矩阵
             obs.h_x_ = Eigen::MatrixXd::Zero(effect_feat_num_, 12);  // 23
             obs.residual_.resize(effect_feat_num_);
 
@@ -596,6 +636,12 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
                 Vec3f C(Rt * norm_vec);
                 Vec3f A(point_crossmat * C);
 
+                // 计算观测方程偏导 jacobian
+                // norm_vec[0], norm_vec[1], norm_vec[2] 对3D点位置偏导-点到平面距离
+                // A[0], A[1], A[2] 对3D点位姿偏导
+                // B[0], B[1], B[2] 对imu-lidar 外参旋转求偏导
+                // C[0], C[1], C[2] 对imu-lidar 外参平移求偏导
+
                 if (extrinsic_est_en_) {
                     Vec3f B(point_be_crossmat * off_R.transpose() * C);
                     obs.h_x_.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], B[0], B[1],
@@ -614,6 +660,7 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
                 const float dsqr_inv = 1.0 / dsqr;
 
                 if (res >= 0) {
+                    // 应用Cauchy鲁棒核函数减小异常值影响
                     rho = dsqr * std::log(1 + res * dsqr_inv);
                     drho = 1.0 / (1 + res * dsqr_inv);
                 } else {
@@ -639,6 +686,7 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
     }
 
     std::sort(res_sq2.begin(), res_sq2.end());
+    // 统计残差中位数与最大值用于收敛性判断
     obs.lidar_residual_mean_ = res_sq2[res_sq2.size() / 2];
     obs.lidar_residual_max_ = res_sq2[res_sq2.size() - 1];
 }
@@ -646,7 +694,7 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
 ///////////////////////////  private method /////////////////////////////////////////////////////////////////////
 
 CloudPtr LaserMapping::GetGlobalMap(bool use_lio_pose, bool use_voxel, float res) {
-    CloudPtr global_map(new PointCloudType);
+    CloudPtr global_map(new PointCloudType); // 初始化全局地图容器
 
     pcl::VoxelGrid<PointType> voxel;
     voxel.setLeafSize(res, res, res);
@@ -666,17 +714,19 @@ CloudPtr LaserMapping::GetGlobalMap(bool use_lio_pose, bool use_voxel, float res
 
         CloudPtr cloud_trans(new PointCloudType);
 
+        // 将关键帧点云从局部坐标系变换到全局世界坐标系
         if (use_lio_pose) {
             pcl::transformPointCloud(*cloud_filter, *cloud_trans, kf->GetLIOPose().matrix());
         } else {
             pcl::transformPointCloud(*cloud_filter, *cloud_trans, kf->GetOptPose().matrix());
         }
 
-        *global_map += *cloud_trans;
+        *global_map += *cloud_trans; // 点云合并
 
         LOG(INFO) << "kf " << kf->GetID() << ", pose: " << kf->GetOptPose().translation().transpose();
     }
 
+    // 再次体素滤波
     CloudPtr global_map_filtered(new PointCloudType);
     if (use_voxel) {
         voxel.setInputCloud(global_map);
