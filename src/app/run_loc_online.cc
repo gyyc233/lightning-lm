@@ -12,6 +12,8 @@
 DEFINE_string(config, "./config/default.yaml", "配置文件");
 
 /// 运行定位的测试
+
+// 在线版需要ROS2环境和实时数据流，离线版只要bag包
 int main(int argc, char** argv) {
     google::InitGoogleLogging(argv[0]);
     FLAGS_colorlogtostderr = true;
@@ -20,8 +22,10 @@ int main(int argc, char** argv) {
     google::ParseCommandLineFlags(&argc, &argv, true);
     using namespace lightning;
 
+    // 初始化ROS2客户端
     rclcpp::init(argc, argv);
 
+    // 定位系统初始化
     LocSystem::Options opt;
     LocSystem loc(opt);
 

@@ -1,3 +1,15 @@
+# common 通用组件
+# io 输入输出
+# core/lio LIO lidar里程计模块
+# core/loop_closing 回环检测
+# core/g2p5 G2P5 地图匹配模块
+# core/maps 瓦片地图
+# core/localization 局部定位
+# utils 工具
+# ui 用户界面
+# core/system 系统
+# wrapper 包装器
+
 add_library(${PROJECT_NAME}.libs SHARED
         common/nav_state.cc
         common/constant.h
@@ -44,6 +56,7 @@ add_library(${PROJECT_NAME}.libs SHARED
         wrapper/bag_io.cc
 )
 
+# 项目依赖多个ros2消息类型与服务
 ament_target_dependencies(
         ${PROJECT_NAME}.libs
         "rclcpp"
@@ -58,11 +71,13 @@ ament_target_dependencies(
         "tf2"
 )
 
+# 对livox lidar消息和其它自定义消息的支持
 add_dependencies(${PROJECT_NAME}.libs
         livox_interfaces2__rosidl_typesupport_cpp
         ${PROJECT_NAME}__rosidl_typesupport_cpp
 )
 
+# 集成 miao pcl 与其它第三方库
 include_directories(${PROJECT_SOURCE_DIR}/src/core/miao)
 add_subdirectory(core/miao)
 
@@ -78,4 +93,5 @@ target_link_libraries(${PROJECT_NAME}.libs
 install(TARGETS ${PROJECT_NAME}.libs miao.core miao.utils
         DESTINATION lib)
 
+# 应用程序子目录
 add_subdirectory(app)

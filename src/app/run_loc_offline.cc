@@ -40,9 +40,13 @@ int main(int argc, char** argv) {
     loc.Init(FLAGS_config, FLAGS_map_path);
 
     lightning::YAML_IO yaml(FLAGS_config);
+
+    // 获取激光雷达与imu话题名称
     std::string lidar_topic = yaml.GetValue<std::string>("common", "lidar_topic");
     std::string imu_topic = yaml.GetValue<std::string>("common", "imu_topic");
 
+    // AddPointCloud2Handle 处理标准lidar点云回调
+    // AddLivoxCloudHandle 处理livox点云回调
     rosbag
         .AddImuHandle(imu_topic,
                       [&loc](IMUPtr imu) {

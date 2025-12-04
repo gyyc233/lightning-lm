@@ -33,6 +33,7 @@ class Localization {
         /// 参数
         SE3 T_body_lidar_;
 
+        // 跳帧设置
         bool enable_lidar_odom_skip_ = false;  // 是否允许激光里程计跳帧
         int lidar_odom_skip_num_ = 1;          // 如果允许跳帧，跳多少帧
         bool enable_lidar_loc_skip_ = true;    // 是否允许激光定位跳帧
