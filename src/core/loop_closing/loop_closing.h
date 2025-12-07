@@ -15,7 +15,7 @@
 namespace lightning {
 
 /**
- * 基于grid ndt的回环检测
+ * 基于grid ndt的回环检测与优化
  */
 class LoopClosing {
    public:
@@ -40,7 +40,7 @@ class LoopClosing {
 
         double rk_loop_th_ = 5.2 / 5;  // 回环的RK阈值
 
-        bool with_height_ = true;
+        bool with_height_ = true; // 是否使用高度信息
         double height_noise_ = 0.1;
     };
 
@@ -59,12 +59,13 @@ class LoopClosing {
    protected:
     void HandleKF(Keyframe::Ptr kf);
 
+    /// @brief 检测回环候选
     void DetectLoopCandidates();
 
     /// 计算回环候选位姿
     void ComputeLoopCandidates();
 
-    /// 计算单个回环候选
+    /// 通过NDT计算单个回环候选,两个关键帧之间的精确相对位姿并评估匹配质量
     void ComputeForCandidate(LoopCandidate& c);
 
     /// 优化位姿
@@ -75,18 +76,18 @@ class LoopClosing {
     Keyframe::Ptr last_kf_ = nullptr;
     Keyframe::Ptr last_loop_kf_ = nullptr;
     Keyframe::Ptr cur_kf_ = nullptr;
-    std::vector<Keyframe::Ptr> all_keyframes_;
-    std::vector<LoopCandidate> candidates_;
+    std::vector<Keyframe::Ptr> all_keyframes_; // 关键帧列表
+    std::vector<LoopCandidate> candidates_; // 回环候选列表
 
-    AsyncMessageProcess<Keyframe::Ptr> kf_thread_;
+    AsyncMessageProcess<Keyframe::Ptr> kf_thread_; // 在线模式，独立线程处理关键帧
 
     std::shared_ptr<miao::Optimizer> optimizer_ = nullptr;
 
     Mat6d info_motion_ = Mat6d::Identity();  // 关键帧间的运动信息阵
     Mat6d info_loops_ = Mat6d::Identity();   // 回环帧的信息矩阵
 
-    std::vector<std::shared_ptr<miao::VertexSE3>> kf_vert_;
-    std::vector<std::shared_ptr<miao::EdgeSE3>> edge_loops_;
+    std::vector<std::shared_ptr<miao::VertexSE3>> kf_vert_; // 关键帧顶点列表
+    std::vector<std::shared_ptr<miao::EdgeSE3>> edge_loops_; // 回环SE3边列表
 
     LoopClosedCallback loop_cb_;
 };
