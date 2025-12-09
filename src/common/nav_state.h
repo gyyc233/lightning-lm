@@ -21,7 +21,7 @@ namespace lightning {
  * S2写成矢量的话24维
  */
 struct NavState {
-    constexpr static int dim = 23;       //  状态变量维度
+    constexpr static int dim = 23;       //  状态变量维度（实际自由度）
     constexpr static int full_dim = 24;  // 误差变量维度
 
     using VectState = Eigen::Matrix<double, dim, 1>;           // 矢量形式
@@ -55,7 +55,7 @@ struct NavState {
         grav_.vec_ = state.block<3, 1>(21, 0);
     }
 
-    // 运动过程
+    // 运动学模型，基于imu计算状态对时间的导数
     inline FullVectState get_f(const Vec3d& gyro, const Vec3d& acce) const {
         FullVectState res = FullVectState::Zero();
         // 减零偏
@@ -63,41 +63,51 @@ struct NavState {
         Vec3d a_inertial = rot_ * (acce - ba_);  // 加计读数-ba 并转到 世界系下
 
         for (int i = 0; i < 3; i++) {
-            res(i) = vel_[i];
-            res(i + 3) = omega[i];
-            res(i + 12) = a_inertial[i] + grav_[i];
+            res(i) = vel_[i]; // 位置导数
+            res(i + 3) = omega[i]; // 旋转导数
+            res(i + 12) = a_inertial[i] + grav_[i]; // 速度导数
         }
         return res;
     }
 
-    /// 运动方程对状态的雅可比
+    /// 运动方程(8个运动方程，每个变量3个维度)对状态量（23）的雅可比
     inline Eigen::Matrix<double, full_dim, dim> df_dx(const Vec3d& acce) const {
         Eigen::Matrix<double, full_dim, dim> cov = Eigen::Matrix<double, full_dim, dim>::Zero();
-        cov.block<3, 3>(0, 12) = Mat3d::Identity();
+        cov.block<3, 3>(0, 12) = Mat3d::Identity(); // 位置变化率(dp/dt)对速度(v)的偏导数是单位矩阵
         Vec3d acc = acce - ba_;
         // Vec3d omega = gyro - bg_;
-        cov.block<3, 3>(12, 3) = -rot_.matrix() * SO3::hat(acc);
-        cov.block<3, 3>(12, 18) = -rot_.matrix();
+        cov.block<3, 3>(12, 3) = -rot_.matrix() * SO3::hat(acc); // 速度变化率对旋转的偏导
+        cov.block<3, 3>(12, 18) = -rot_.matrix(); // 速度变化率对加计零偏的偏导
 
         Vec2d vec = Vec2d::Zero();
         Eigen::Matrix<double, 3, 2> grav_matrix = grav_.S2_Mx(vec);
 
-        cov.block<3, 2>(12, 21) = grav_matrix;
-        cov.block<3, 3>(3, 15) = -Eigen::Matrix3d::Identity();
+        cov.block<3, 2>(12, 21) = grav_matrix; // 速度变化率(dv/dt)对重力(g)的偏导数通过S2球面的切空间映射获得
+        cov.block<3, 3>(3, 15) = -Eigen::Matrix3d::Identity(); // 旋转变化率(dR/dt)对陀螺仪零偏的偏导
+
+        // 速度影响位置
+        // 旋转影响速度
+        // 加计偏置影响速度
+        // 重力影响速度
+        // 陀螺仪偏置影响旋转
         return cov;
     }
 
     /// 运动方程对噪声的雅可比
     inline Eigen::Matrix<double, 24, 12> df_dw() const {
+        // 24 维状态导数对 12 维噪声变量的偏导
+
+        // 加计零偏噪声--速度--加计噪声
+        // 陀螺仪零偏噪声--旋转--陀螺仪噪声
         Eigen::Matrix<double, 24, 12> cov = Eigen::Matrix<double, 24, 12>::Zero();
-        cov.block<3, 3>(12, 3) = -rot_.matrix();
-        cov.block<3, 3>(3, 0) = -Eigen::Matrix3d::Identity();
-        cov.block<3, 3>(15, 6) = Eigen::Matrix3d::Identity();
-        cov.block<3, 3>(18, 9) = Eigen::Matrix3d::Identity();
+        cov.block<3, 3>(12, 3) = -rot_.matrix(); // 速度变化率(dv/dt)对加速度计噪声的偏导
+        cov.block<3, 3>(3, 0) = -Eigen::Matrix3d::Identity(); // 旋转变化率(dR/dt)对陀螺仪噪声的偏导
+        cov.block<3, 3>(15, 6) = Eigen::Matrix3d::Identity(); // 陀螺仪零偏变化率对自身随机游走噪声的偏导
+        cov.block<3, 3>(18, 9) = Eigen::Matrix3d::Identity(); // 加速度计零偏变化率对自身随机游走噪声的偏导
         return cov;
     }
 
-    /// 递推
+    /// 状态量的名义值递推
     void oplus(const FullVectState& vec, double dt) {
         timestamp_ += dt;
         pos_ += vec.middleRows(0, 3) * dt;
@@ -131,7 +141,7 @@ struct NavState {
     }
 
     /**
-     * 广义加法 this = this+dx
+     * 广义加法 this = this+dx 将一个误差状态量加到名义状态量中，更新了名义状态量
      * @param dx 增量
      */
     NavState boxplus(const VectState& dx) {

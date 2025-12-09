@@ -58,10 +58,12 @@ using Mat23f = Eigen::Matrix<float, 2, 3>;
 using Mat66f = Eigen::Matrix<float, 6, 6>;
 using MatXd = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>;
 
+// 定义一个模板别名，是Eigen列向量，N表示向量维度，T表示类型
+// Eigen::ColMajor直嘀咕内存存储顺序为列优先
 template <int N, typename T = double>
 using VectorN = Eigen::Matrix<T, N, 1, Eigen::ColMajor>;
-using Vector2 = VectorN<2>;
-using Vector3 = VectorN<3>;
+using Vector2 = VectorN<2>; // 2维向量
+using Vector3 = VectorN<3>; // 3维向量
 using Vector4 = VectorN<4>;
 using Vector6 = VectorN<6>;
 using Vector7 = VectorN<7>;
@@ -85,10 +87,12 @@ using Quatd = Eigen::Quaternion<double>;
 using Trans3d = Eigen::Translation3d;
 using AngAxisd = Eigen::AngleAxis<double>;
 using Quat = Quatd;
+
 using Aff3f = Eigen::Affine3f;
 using Quatf = Eigen::Quaternion<float>;
 using Trans3f = Eigen::Translation3f;
 using AngAxisf = Eigen::AngleAxis<float>;
+
 using SE3f = Sophus::SE3f;
 
 }  // namespace lightning

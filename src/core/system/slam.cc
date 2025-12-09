@@ -35,6 +35,7 @@ bool SlamSystem::Init(const std::string& yaml_path) {
     options_.with_gridmap_ = yaml["system"]["with_g2p5"].as<bool>();
     options_.step_on_kf_ = yaml["system"]["step_on_kf"].as<bool>();
 
+    // 是否启用回环检测
     if (options_.with_loop_closing_) {
         LOG(INFO) << "slam with loop closing";
         LoopClosing::Options options;
@@ -51,6 +52,7 @@ bool SlamSystem::Init(const std::string& yaml_path) {
         lio_->SetUI(ui_);
     }
 
+    // 栅格地图模块初始化
     if (options_.with_gridmap_) {
         g2p5::G2P5::Options opt;
         opt.online_mode_ = options_.online_mode_;
@@ -154,11 +156,13 @@ void SlamSystem::SaveMap(const std::string& path) {
     if (!std::filesystem::exists(save_path)) {
         std::filesystem::create_directories(save_path);
     } else {
+        // 路径存在则清空再创建
         std::filesystem::remove_all(save_path);
         std::filesystem::create_directories(save_path);
     }
 
     // auto global_map_no_loop = lio_->GetGlobalMap(true);
+    // 从LIO模块获取全局点云地图，若启用回环则使用优化后地图
     auto global_map = lio_->GetGlobalMap(!options_.with_loop_closing_);
     // auto global_map_raw = lio_->GetGlobalMap(!options_.with_loop_closing_, false, 0.1);
 
@@ -179,6 +183,7 @@ void SlamSystem::SaveMap(const std::string& path) {
         const int width = map.info.width;
         const int height = map.info.height;
 
+        // 创建2D栅格地图
         cv::Mat nav_image(height, width, CV_8UC1);
         for (int y = 0; y < height; ++y) {
             const int rowStartIndex = y * width;
@@ -257,14 +262,17 @@ void SlamSystem::ProcessLidar(const sensor_msgs::msg::PointCloud2::SharedPtr& cl
         return;
     }
 
+    // 将新关键帧发送到回环检测模块
     if (options_.with_loop_closing_) {
         lc_->AddKF(cur_kf_);
     }
 
+    // 发送到栅格地图模块
     if (options_.with_gridmap_) {
         g2p5_->PushKeyframe(cur_kf_);
     }
 
+    // 发送到可视化模块
     if (ui_) {
         ui_->UpdateKF(cur_kf_);
     }

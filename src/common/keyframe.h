@@ -28,11 +28,15 @@ class Keyframe {
     unsigned long GetID() const { return id_; }
     CloudPtr GetCloud() const { return cloud_; }
 
+    /// @brief 获取 LIO pose
+    /// @return 
     SE3 GetLIOPose() {
         UL lock(data_mutex_);
         return pose_lio_;
     }
 
+    /// @brief 设置 LIO pose
+    /// @param pose 
     void SetLIOPose(const SE3& pose) {
         UL lock(data_mutex_);
         pose_lio_ = pose;
@@ -41,21 +45,29 @@ class Keyframe {
         pose_opt_ = pose_lio_;
     }
 
+    /// @brief 获取优化后的 pose
+    /// @return 
     SE3 GetOptPose() {
         UL lock(data_mutex_);
         return pose_opt_;
     }
 
+    /// @brief 设置优化后的 pose
+    /// @param pose 
     void SetOptPose(const SE3& pose) {
         UL lock(data_mutex_);
         pose_opt_ = pose;
     }
 
+    /// @brief 设置状态
+    /// @param s 
     void SetState(NavState s) {
         UL lock(data_mutex_);
         state_ = s;
     }
 
+    /// @brief 获取状态
+    /// @return 
     NavState GetState() {
         UL lock(data_mutex_);
         return state_;
