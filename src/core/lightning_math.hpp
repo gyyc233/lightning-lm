@@ -39,6 +39,7 @@ inline Eigen::Matrix<T, 3, 3> SKEW_SYM_MATRIX(const T& v1, const T& v2, const T&
     return m;
 }
 
+/* exprithm of a so3 */
 template <typename T>
 Eigen::Matrix<T, 3, 3> Exp(const Eigen::Matrix<T, 3, 1>&& ang) {
     T ang_norm = ang.norm();
@@ -99,14 +100,17 @@ Eigen::Matrix<T, 3, 1> Log(const Eigen::Matrix<T, 3, 3>& R) {
 
 template <typename T>
 Eigen::Matrix<T, 3, 1> RotMtoEuler(const Eigen::Matrix<T, 3, 3>& rot) {
+    // 奇异点检测,sy接近0时表示pitch接近90，会出现万向锁现象
     T sy = sqrt(rot(0, 0) * rot(0, 0) + rot(1, 0) * rot(1, 0));
     bool singular = sy < 1e-6;
     T x, y, z;
     if (!singular) {
+        // 没有奇异点(pitch 不接近 ±90)
         x = atan2(rot(2, 1), rot(2, 2));
         y = atan2(-rot(2, 0), sy);
         z = atan2(rot(1, 0), rot(0, 0));
     } else {
+        // 奇异点处理(pitch 接近 ±90)
         x = atan2(-rot(1, 2), rot(1, 1));
         y = atan2(-rot(2, 0), sy);
         z = 0;
@@ -232,9 +236,9 @@ inline void HistoryMeanAndVar(size_t hist_n, float hist_mean, float hist_var2, s
 }
 
 /**
- * Calculate cosine and sinc of sqrt(x2).
+ * Calculate cosine and sinc of sqrt(x2). 计算给定平方角度值x2的cos和sinc
  * @param x2 the squared angle must be non-negative
- * @return a pair containing cos and sinc of sqrt(x2)
+ * @return a pair containing cos and sinc of sqrt(x2) {cos(sqrt[x2]), sin(sqrt[x2])/sqrt[x2]}
  */
 template <class scalar>
 inline std::pair<scalar, scalar> cos_sinc_sqrt(const scalar& x2) {
@@ -248,6 +252,7 @@ inline std::pair<scalar, scalar> cos_sinc_sqrt(const scalar& x2) {
     assert(x2 >= 0 && "argument must be non-negative");
 
     // FIXME check if bigger bounds are possible
+    // 当 x2 较大时，使用直接计算方法
     if (x2 >= taylor_n_bound) {
         // slow fall-back solution
         scalar x = sqrt(x2);
@@ -257,6 +262,7 @@ inline std::pair<scalar, scalar> cos_sinc_sqrt(const scalar& x2) {
     // FIXME Replace by Horner-Scheme (4 instead of 5 FLOP/term, numerically more stable, theoretically cos and sinc can
     // be calculated in parallel using SSE2 mulpd/addpd)
     // TODO Find optimal coefficients using Remez algorithm
+    // 当 x2 很小时，使用泰勒展开近似计算
     static scalar const inv[] = {1 / 3., 1 / 4., 1 / 5., 1 / 6., 1 / 7., 1 / 8., 1 / 9.};
     scalar cosi = 1., sinc = 1;
     scalar term = -1 / 2. * x2;
@@ -275,17 +281,22 @@ inline SO3 exp(const Vec3d& vec, const double& scale = 1) {
     std::pair<double, double> cos_sinc = cos_sinc_sqrt(scale * scale * norm2);
     double mult = cos_sinc.second * scale;
     Vec3d result = mult * vec;
+    // 旋转向量转四元数再转旋转矩阵
     return SO3(Quatd(cos_sinc.first, result[0], result[1], result[2]));
 }
 
+/// @brief 计算3*2矩阵的伪逆(2*3) 将矩阵做SVD分解，再将SVD的结果进行转置，得到伪逆
+/// @param X 
+/// @return 
 inline Eigen::Matrix<double, 2, 3> PseudoInverse(const Eigen::Matrix<double, 3, 2>& X) {
     Eigen::JacobiSVD<Eigen::Matrix<double, 3, 2>> svd(X, Eigen::ComputeFullU | Eigen::ComputeFullV);
 
     Vec2d sv = svd.singularValues();
     Eigen::Matrix<double, 3, 2> U = svd.matrixU().block<3, 2>(0, 0);
     Eigen::Matrix<double, 2, 2> V = svd.matrixV();
-    Eigen::Matrix<double, 2, 3> U_adjoint = U.adjoint();
+    Eigen::Matrix<double, 2, 3> U_adjoint = U.adjoint(); // U的共轭转置
     double tolerance = std::numeric_limits<double>::epsilon() * 3 * std::abs(sv(0, 0));
+    // 大于容忍度的奇异值取倒数，小于容忍度的设为0
     sv(0, 0) = std::abs(sv(0, 0)) > tolerance ? 1.0 / sv(0, 0) : 0;
     sv(1, 0) = std::abs(sv(1, 0)) > tolerance ? 1.0 / sv(1, 0) : 0;
 
@@ -293,7 +304,7 @@ inline Eigen::Matrix<double, 2, 3> PseudoInverse(const Eigen::Matrix<double, 3, 
 }
 
 /**
- * SO3 Jl()/JacobianL()
+ * SO3 Jl()/JacobianL() SO3的左扰动更新jacobian
  * @param v
  * @return
  */
@@ -310,7 +321,7 @@ inline Eigen::Matrix<double, 3, 3> A_matrix(const Vec3d& v) {
     return res;
 }
 
-/// SO3 Jlinv()
+/// SO3 Jlinv() SO3的左扰动更新jacobian的逆
 inline Eigen::Matrix<double, 3, 3> A_inv(const Vec3d& v) {
     Eigen::Matrix<double, 3, 3> res;
     if (v.norm() > 1e-5) {
@@ -327,6 +338,9 @@ inline Eigen::Matrix<double, 3, 3> A_inv(const Vec3d& v) {
     return res;
 }
 
+// 将二维和三位向量映射为哈希值，空间哈希 Spatial Hashing
+// 将连续空间中的点映射到离散哈希值，应用于碰撞检测，点云处理，空间数据结构(哈希表，网格索引)
+
 /// hash of vector
 template <int N>
 struct hash_vec {
@@ -337,6 +351,8 @@ struct hash_vec {
 /// @see Optimized Spatial Hashing for Collision Detection of Deformable Objects, Matthias Teschner et. al., VMV 2003
 template <>
 inline size_t hash_vec<2>::operator()(const Eigen::Matrix<int, 2, 1>& v) const {
+    // 使用大质数作为乘数，减少哈希冲突，提高哈希分布均匀性
+    // 73856093 用于x坐标，471943 用于y坐标，83492791 用于z坐标
     return size_t(((v[0]) * 73856093) ^ ((v[1]) * 471943)) % 10000000;
 }
 
@@ -347,11 +363,11 @@ inline size_t hash_vec<3>::operator()(const Eigen::Matrix<int, 3, 1>& v) const {
 }
 
 /**
- * estimate a plane
+ * estimate a plane 估计一个点集是否构成一个平面
  * @tparam T
- * @param pca_result
- * @param point
- * @param threshold
+ * @param pca_result pca 结果
+ * @param point 点集
+ * @param threshold 点到平面距离阈值
  * @return
  */
 template <typename T>
@@ -403,9 +419,11 @@ inline bool esti_plane(Eigen::Matrix<T, 4, 1>& pca_result, const PointVector& po
     pca_result(2) = normvec(2) / n;
     pca_result(3) = 1.0 / n;
 
+    // 平面一致性检验
     for (const auto& p : point) {
         Eigen::Matrix<T, 4, 1> temp = p.getVector4fMap();
         temp[3] = 1.0;
+        // 超过阈值则认为不构成平面
         if (fabs(pca_result.dot(temp)) > threshold) {
             return false;
         }
@@ -602,7 +620,7 @@ inline SE3 XYZRPYToSE3(const PoseRPYD& pose) {
 }
 
 /**
- * pose 插值算法
+ * 位姿时间插值算法
  * @tparam T    数据类型
  * @tparam C 数据容器类型
  * @tparam FT 获取时间函数
@@ -627,7 +645,7 @@ inline bool PoseInterp(double query_time, C&& data, FT&& take_time_func, FP&& ta
         return false;
     }
 
-    double last_time = take_time_func(*data.rbegin());
+    double last_time = take_time_func(*data.rbegin()); // rbegin() 逆序迭代器
     double first_time = take_time_func(*data.begin());
     if (query_time > last_time) {
         if (verbose) {
@@ -731,6 +749,7 @@ inline bool PoseInterp(double query_time, C&& data, FT&& take_time_func, FP&& ta
         return true;
     }
 
+    // Slerp进行旋转插值，线性插值进行平移插值
     double dt = take_time_func(*match_iter_n) - take_time_func(*match_iter);
     double s = (query_time - take_time_func(*match_iter)) / dt;  // s=0 时为第一帧，s=1时为next
     // 出现了 dt为0的bug
