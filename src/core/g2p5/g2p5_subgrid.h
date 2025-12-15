@@ -34,9 +34,10 @@ class SubGrid {
 
         if (hit) {
             // 占据，黑色
+            // 新观测高度低于当前记录的最低高度时
             if (height < cell.height_) {
-                cell.height_ = height;
-                cell.hit_cnt_ += 1;
+                cell.height_ = height; // 更新最新的最低高度
+                cell.hit_cnt_ += 1; // 增加占据次数
                 cell.visit_cnt_ += 1;
             }
         } else {
@@ -53,14 +54,17 @@ class SubGrid {
         }
     }
 
+    /// @brief 移除车辆噪声
+    /// @param sub_xi 
+    /// @param sub_yi 
     void RemoveCarNoise(int sub_xi, int sub_yi) {
         UL lock(data_mutex_);
         if (grid_data_ == nullptr) {
             MallocGrid();
         }
         int index = sub_xi + sub_yi * width_;
-        grid_data_[index].visit_cnt_ += 4;
-        grid_data_[index].hit_cnt_ = 0;
+        grid_data_[index].visit_cnt_ += 4; // 多次增加访问计数
+        grid_data_[index].hit_cnt_ = 0; // 将占据次数清空，不再视为障碍点
     }
 
     /// 判定数据是否为空
@@ -82,7 +86,7 @@ class SubGrid {
     // 分配这个grid的内存
     void MallocGrid();
 
-    /// 子网格的大小
+    /// 子网格的大小为16*16个单元格
     static inline constexpr int width_ = (1 << SUB_GRID_SIZE);
     static inline constexpr int width_2_ = (1 << SUB_GRID_SIZE) * (1 << SUB_GRID_SIZE);
 

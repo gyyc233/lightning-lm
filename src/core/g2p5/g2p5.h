@@ -8,7 +8,7 @@
 #include "common/eigen_types.h"
 #include "common/keyframe.h"
 #include "core/g2p5/g2p5_map.h"
-#include "core/system/async_message_process.h"
+#include "core/system/async_message_process.h" // 异步消息处理
 
 #include <thread>
 
@@ -83,7 +83,7 @@ class G2P5 {
     /// 获取最新的地图
     G2P5MapPtr GetNewestMap();
 
-    /// 设置是否需要最快渲染速度
+    /// 设置是否需要最快渲染速度 并行渲染模式
     bool SetParallelRendering(bool enable_parallel = false) {
         parallel_render_ = enable_parallel;
         return true;
@@ -111,6 +111,10 @@ class G2P5 {
     /// 检测地面参数
     bool DetectPlaneCoeffs(Keyframe::Ptr kf);
 
+    /// @brief 将处理后的2D扫描数据转换为occupancy map中的 free space(白色点)
+    /// @param ang_distance_height 
+    /// @param kf 
+    /// @param map 
     void SetWhitePoints(const std::vector<Vec2d> &ang_distance_height, Keyframe::Ptr kf, G2P5MapPtr &map);
 
     Options options_;

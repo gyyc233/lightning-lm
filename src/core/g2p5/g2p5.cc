@@ -27,7 +27,7 @@ void G2P5::Quit() {
     }
 
     if (draw_backend_map_thread_.joinable()) {
-        draw_backend_map_thread_.join();
+        draw_backend_map_thread_.join(); // 等待线程完全结束
     }
 }
 
@@ -51,11 +51,12 @@ void G2P5::RenderFront(Keyframe::Ptr kf) {
     {
         UL lock{newest_map_mutex_};
 
+        // 将关键帧添加到前端地图
         lightning::Timer::Evaluate([&]() { AddKfToMap({kf}, frontend_map_); }, "G2P5 Occupancy Mapping", true);
         newest_map_ = frontend_map_;
     }
 
-    /// 向外回调
+    /// 地图更新回调，通知外部组件
     if (map_update_cb_) {
         map_update_cb_(newest_map_);
     }
@@ -64,6 +65,7 @@ void G2P5::RenderFront(Keyframe::Ptr kf) {
 void G2P5::RedrawGlobalMap() { backend_redraw_flag_ = true; }
 
 void G2P5::RenderBack() {
+    // GEP5的后端渲染函数，负责全局地图优化与重绘
     while (!quit_flag_) {
         while (!backend_redraw_flag_ && !quit_flag_) {
             sleep(1);
@@ -82,7 +84,7 @@ void G2P5::RenderBack() {
         std::vector<Keyframe::Ptr> all_keyframes;
         {
             UL lock(kf_mutex_);
-            all_keyframes = all_keyframes_;
+            all_keyframes = all_keyframes_; // 接收所有关键帧数据
         }
 
         if (all_keyframes.empty()) {
@@ -97,6 +99,7 @@ void G2P5::RenderBack() {
         bool abort = false;
 
         for (; cur_kf != all_keyframes.end(); ++cur_kf) {
+            // 遍历所有关键帧，逐一添加到地图
             AddKfToMap({*cur_kf}, backend_map_);
             if (backend_redraw_flag_) {
                 LOG(INFO) << "backend redraw triggered in process, abort";
@@ -117,6 +120,7 @@ void G2P5::RenderBack() {
         }
 
         /// 绘制过程中前端可能发生了更新，要保证后端绘制和前端的一致性
+        // 若前端有新处理的关键帧，也要加入后端地图
         int cur_idx = all_keyframes.back()->GetID();
         while (true) {
             Keyframe::Ptr frontend_kf = nullptr;
@@ -146,7 +150,7 @@ void G2P5::RenderBack() {
         {
             /// 同步前后端地图，替换newest map
             UL lock{newest_map_mutex_};
-            frontend_map_ = backend_map_;
+            frontend_map_ = backend_map_; // 替换前端地图为优化后的后端地图
             newest_map_ = frontend_map_;
         }
 
@@ -163,6 +167,7 @@ void G2P5::RenderBack() {
 
 bool G2P5::ResizeMap(const std::vector<Keyframe::Ptr> &kfs, G2P5MapPtr &map) {
     /// 重设地图大小
+    // 根据新的关键帧数据动态调整地图边界
     float init_min_x, init_min_y, init_max_x, init_max_y;
     float min_x, min_y, max_x, max_y;
     map->GetMinAndMax(init_min_x, init_min_y, init_max_x, init_max_y);
@@ -181,6 +186,7 @@ bool G2P5::ResizeMap(const std::vector<Keyframe::Ptr> &kfs, G2P5MapPtr &map) {
         SE3 pose = kf->GetOptPose();
         auto cloud = kf->GetCloud();
 
+        // 关键帧位置更新引起的边界变化
         if (pose.translation().x() < min_x) {
             min_x = pose.translation().x();
         }
@@ -208,6 +214,7 @@ bool G2P5::ResizeMap(const std::vector<Keyframe::Ptr> &kfs, G2P5MapPtr &map) {
                 continue;
             }
 
+            // 点云从激光转到世界坐标系
             Vec3d point = pose * cloud->points[i].getVector3fMap().cast<double>();
 
             if ((point.x() - 1) < min_x) {
@@ -273,6 +280,7 @@ G2P5MapPtr G2P5::GetNewestMap() {
 void G2P5::Convert3DTo2DScan(Keyframe::Ptr kf, G2P5MapPtr &map) {
     // 3D转2D算法
     if (options_.esti_floor_) {
+        // 估计地面
         if (!DetectPlaneCoeffs(kf)) {
             /// 如果动态检测失败，就用之前的参数
             floor_coeffs_ = Vec4d(0, 0, 1, -options_.default_floor_height_);
@@ -286,8 +294,9 @@ void G2P5::Convert3DTo2DScan(Keyframe::Ptr kf, G2P5MapPtr &map) {
     }
 
     // step 1. 计算每个方向上发出射线上的高度分布, // NOTE 转成整形的360度是有精度损失的
-    std::vector<std::map<double, double>> rays(360);               // map键值：距离-相对高度（以距离排序）
-    std::vector<Vec2d> angle_distance_height(360, Vec2d::Zero());  // 每个角度上的距离-高度值
+    std::vector<std::map<double, double>> rays(360);               // map键值：距离-相对高度（以距离排序），每个角度都都是一个map,有多个点，他们的距离，高度属性不同，是3D
+    // 每个角度上的点根据key(距离)升序排序
+    std::vector<Vec2d> angle_distance_height(360, Vec2d::Zero());  // 每个角度上的距离-高度值，每个角度只有一个
     std::vector<Vec3d> pts_3d;                                     /// 距离地面0.3 ～ 1.2米之间的点云，激光坐标系下
 
     SE3 Twb = kf->GetOptPose();
@@ -328,6 +337,7 @@ void G2P5::Convert3DTo2DScan(Keyframe::Ptr kf, G2P5MapPtr &map) {
                 // 特别矮的和特别高的都不计入
                 pts_3d.emplace_back(pc);
 
+                // 根据角度将点分类存储到对应射线中
                 rays[angle].insert({dis, dis_floor});
 
                 /// 设置黑点
@@ -357,6 +367,8 @@ void G2P5::Convert3DTo2DScan(Keyframe::Ptr kf, G2P5MapPtr &map) {
 
     std::vector<double> floor_esti_data;  // 地面高度估计值
 
+    // 每个角度对应一条射线
+    // 射线分析与空闲空间识别
     // step 2, 考察每个方向上的分布曲线
     // 正常场景中，每个方向由较低高度开始（地面），转到较高的高度（物体）
     // 如若不是，那么可能发生了遮挡或进入盲区
@@ -374,7 +386,7 @@ void G2P5::Convert3DTo2DScan(Keyframe::Ptr kf, G2P5MapPtr &map) {
             continue;
         }
 
-        /// 取距离和高度
+        /// 取距离和高度 从远到近分析射线上的点 <k-v> -- <距离-相对高度>
         for (auto iter = rays[i].rbegin(); iter != rays[i].rend(); ++iter) {
             if (iter->second < options_.min_th_floor_) {
                 angle_distance_height[i] = Vec2d(iter->first, iter->second);
@@ -384,8 +396,10 @@ void G2P5::Convert3DTo2DScan(Keyframe::Ptr kf, G2P5MapPtr &map) {
             auto next_iter = iter;
             next_iter++;
 
+            // 在遍历完所有障碍点后，记录最后一个边界点的信息，然后该角度射线的分析结束
             if (next_iter != rays[i].rend()) {
                 if (iter->second > options_.min_th_floor_ && next_iter->second < options_.min_th_floor_) {
+                    // 从无障碍到有障碍的边界点
                     // 当前点是障碍但下一个点不是
                     angle_distance_height[i] = Vec2d(iter->first, iter->second);
                     break;
@@ -411,12 +425,13 @@ void G2P5::SetWhitePoints(const std::vector<Vec2d> &pt2d, Keyframe::Ptr kf, G2P5
             return;
         }
 
+        // 极坐标转(d,h,delta) -> xyz
         double angle = float(i) * constant::kDEG2RAD;
         float r = pt2d[i][0];
         float h = pt2d[i][1];
 
-        Vec3d p_local(r * cos(angle), r * sin(angle), h);
-        Vec3d p_world = pose * p_local;
+        Vec3d p_local(r * cos(angle), r * sin(angle), h); // 极坐标转(d,h,delta) -> xyz
+        Vec3d p_world = pose * p_local; // 再转世界坐标系
 
         /// 某方向无测量值时，认为无效
         if (r <= 0 || r > options_.usable_scan_range_) {
@@ -426,7 +441,7 @@ void G2P5::SetWhitePoints(const std::vector<Vec2d> &pt2d, Keyframe::Ptr kf, G2P5
             }
             continue;
         }
-
+        // 在lidar与点之间绘制一条线，标记为无障碍
         map->SetMissPoint(p_world[0], p_world[1], orig[0], orig[1], h, options_.lidar_height_);
     }
 }

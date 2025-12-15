@@ -17,13 +17,14 @@ bool G2P5Map::Init(const float &temp_min_x, const float &temp_min_y, const float
     max_x_ = temp_max_x;
     max_y_ = temp_max_y;
 
-    grid_size_x_ = ceil((max_x_ - min_x_) / grid_reso_);
+    grid_size_x_ = ceil((max_x_ - min_x_) / grid_reso_); // 向上取整
     grid_size_y_ = ceil((max_y_ - min_y_) / grid_reso_);
 
     if (grid_size_x_ <= 0 || grid_size_y_ <= 0) {
         return false;
     }
 
+    // 使用二级指针实现二维数组，提高内存访问效率
     grids_ = new SubGrid *[grid_size_x_];
     for (int xi = 0; xi < grid_size_x_; ++xi) {
         grids_[xi] = new SubGrid[grid_size_y_];
@@ -61,11 +62,13 @@ bool G2P5Map::Resize(const float &temp_min_x, const float &temp_min_y, const flo
         new_grids[xi] = new SubGrid[temp_grid_size_y];
     }
 
+    // 计算新坐标系的边界
     int min_grid_x = (int)round((temp_min_x - min_x_) / grid_reso_);
     int min_grid_y = (int)round((temp_min_y - min_y_) / grid_reso_);
     int max_grid_x = (int)ceil((temp_max_x - min_x_) / grid_reso_);
     int max_grid_y = (int)ceil((temp_max_y - min_y_) / grid_reso_);
 
+    // 确定数据复制范围，不超过原地图的边界 this->grid_size_x_，this->grid_size_y_
     int dx = min_grid_x < 0 ? 0 : min_grid_x;
     int dy = min_grid_y < 0 ? 0 : min_grid_y;
     int Dx = max_grid_x < this->grid_size_x_ ? max_grid_x : this->grid_size_x_;
@@ -128,6 +131,8 @@ void G2P5Map::UpdateCell(const Vec2i &point_index, const bool &if_hit, float hei
 
     int x_index = point_index.x();
     int y_index = point_index.y();
+
+    // 计算点的所属子网格id
     int xi = (x_index >> SUB_GRID_SIZE);
     int yi = (y_index >> SUB_GRID_SIZE);
 
@@ -135,6 +140,16 @@ void G2P5Map::UpdateCell(const Vec2i &point_index, const bool &if_hit, float hei
         return;
     }
 
+    // 点在全局坐标系与层级网格结果之间的映射
+
+    // 计算该点在子网格中的局部坐标
+    // 1. 计算子网格索引
+    // xi = 35 >> 4 = 2  // 第3个子网格(从0开始)
+    // yi = 27 >> 4 = 1  // 第2个子网格(从0开始)
+    // 2. 计算点在子网格中的局部坐标
+    // sub_index_i = 35 - (2 << 4) = 35 - 32 = 3
+    // sub_index_j = 27 - (1 << 4) = 27 - 16 = 11
+    
     int sub_index_i = x_index - (xi << SUB_GRID_SIZE);
     int sub_index_j = y_index - (yi << SUB_GRID_SIZE);
 
@@ -152,22 +167,26 @@ void G2P5Map::SetMissPoint(const float &point_x, const float &point_y, const flo
         return;
     }
 
+    // 世界坐标点转栅格索引坐标
     int point_x_index = floor(point_x / options_.resolution_);
     int point_y_index = floor(point_y / options_.resolution_);
 
+    // lidar原点转栅格索引坐标
     int xi_lidar = floor(laser_origin_x / options_.resolution_);
     int yi_lidar = floor(laser_origin_y / options_.resolution_);
 
     float k = 0;
     int sign = 1;
+    // 计算世界点与lidar原点的相对位置
     int diff_y = point_y_index - yi_lidar;
     int diff_x = point_x_index - xi_lidar;
 
-    /// 整数的直线填充算法
+    /// 两点重合
     if (diff_y == 0 && diff_x == 0) {
         return;
     }
 
+    // 验证坐标有效性
     if (!GetDataIndex(laser_origin_x, laser_origin_y, xi_lidar, yi_lidar)) {
         return;
     }
@@ -175,6 +194,7 @@ void G2P5Map::SetMissPoint(const float &point_x, const float &point_y, const flo
     std::vector<Vec2i> updated_pts;
     std::vector<float> heights;
 
+    // 在lidar雷达高度与目标点高度之间进行线性插值
     if (std::abs(diff_y) > std::abs(diff_x)) {
         if (diff_y == 0) {
             return;
@@ -190,7 +210,7 @@ void G2P5Map::SetMissPoint(const float &point_x, const float &point_y, const flo
             int y_index = yi_lidar + j;
 
             updated_pts.emplace_back(Vec2i(x_index, y_index));
-            heights.emplace_back(lidar_height - j * dh);
+            heights.emplace_back(lidar_height - j * dh); // 随距离由今及远
         }
     } else {
         if (diff_x == 0) {
@@ -212,6 +232,7 @@ void G2P5Map::SetMissPoint(const float &point_x, const float &point_y, const flo
         }
     }
 
+    // 将路径上的所有点标记为自由空间
     for (int i = 0; i < updated_pts.size(); ++i) {
         UpdateCell(updated_pts[i], false, heights[i]);
     }
@@ -244,8 +265,9 @@ void G2P5Map::ReleaseResources() {
 
 nav_msgs::msg::OccupancyGrid G2P5Map::ToROS() {
     nav_msgs::msg::OccupancyGrid occu_map;
-    int image_width = grid_size_x_ * sub_grid_width_;
+    int image_width = grid_size_x_ * sub_grid_width_; // 网格数量*子网格尺寸
     int image_height = grid_size_y_ * sub_grid_width_;
+
     occu_map.info.resolution = static_cast<nav_msgs::msg::MapMetaData::_resolution_type>(options_.resolution_);
     occu_map.info.width = static_cast<nav_msgs::msg::MapMetaData::_width_type>(image_width);
     occu_map.info.height = static_cast<nav_msgs::msg::MapMetaData::_width_type>(image_height);
@@ -266,6 +288,7 @@ nav_msgs::msg::OccupancyGrid G2P5Map::ToROS() {
                 continue;
             }
 
+            // 遍历每个子网格里的所有点
             for (int sxi = 0; sxi < sub_grid_width_; ++sxi) {
                 for (int syi = 0; syi < sub_grid_width_; ++syi) {
                     int x = (bxi << SUB_GRID_SIZE) + sxi;
@@ -275,15 +298,20 @@ nav_msgs::msg::OccupancyGrid G2P5Map::ToROS() {
                         unsigned int hit_cnt = 0, visit_cnt = 0;
                         grids_[bxi][byi].GetHitAndVisit(sxi, syi, hit_cnt, visit_cnt);
 
+                        // 计算占用概率
                         float occ = (visit_cnt > 3) ? (float)hit_cnt / (float)visit_cnt : -1;
 
+                        // 根据占用概率设置地图值
                         /// 注意这里有转置符号
                         if (occ < 0) {
+                            // 未知区域保持-1
                             continue;
                         } else if (occ > options_.occupancy_ratio_) {
+                            // 占用区域设为100
                             tmp_area++;
                             occu_map.data[MapIdx(image_width, x, y)] = 100;
                         } else {
+                            // 自由区域设为0并扩展自由空间
                             int index = MapIdx(image_width, x, y);
                             index_min = std::max(0, index - 1);
                             index_max = std::min(grid_map_size_1, index + 1);
