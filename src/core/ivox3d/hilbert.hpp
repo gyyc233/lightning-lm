@@ -28,6 +28,9 @@
 #include <limits>
 #include <type_traits>
 
+// 实现 N 维希尔伯特曲线编解码
+// 希尔伯特曲线是一种连续的分形空间填充曲线，能够将多维数据映射到一维空间
+
 // Version 1.1 - 29 August 2019
 
 //

@@ -9,24 +9,36 @@
 
 namespace lightning {
 
+// 体素节点类
 template <typename PointT, int dim = 3>
 class IVoxNode {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    struct DistPoint;
+    struct DistPoint; // 带距离信息的点
 
     IVoxNode() = default;
     IVoxNode(const PointT& center, const float& side_length) {}  /// same with phc
 
+    /// @brief 体素内插点
+    /// @param pt 
     void InsertPoint(const PointT& pt);
 
     inline bool Empty() const;
 
     inline std::size_t Size() const;
 
+    /// @brief 获取体素内点
+    /// @param idx 
+    /// @return 
     inline PointT GetPoint(const std::size_t idx) const;
 
+    /// @brief 基于条件的KNN搜索
+    /// @param dis_points 
+    /// @param point 
+    /// @param K 
+    /// @param max_range 
+    /// @return 
     int KNNPointByCondition(std::vector<DistPoint>& dis_points, const PointT& point, const int& K,
                             const double& max_range);
 
@@ -34,13 +46,16 @@ class IVoxNode {
     std::vector<PointT> points_;
 };
 
+// 采用 Pseudo Hilbert Curve 伪希尔伯特曲线 增强的体素节点
+// 利用希尔伯特曲线对空间进行编码以提高查询效率，提供更高效的最近邻及K近邻搜索算法
+// 通过对三维空间进行希尔伯特编码，使得物理位置接近的点在索引序列中也相对靠近，从而加快搜索速度
 template <typename PointT, int dim = 3>
 class IVoxNodePhc {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     struct DistPoint;
-    struct PhcCube;
+    struct PhcCube; // 表示经过希尔伯特编码的空间子块
 
     IVoxNodePhc() = default;
     IVoxNodePhc(const PointT& center, const float& side_length, const int& phc_order = 6);
