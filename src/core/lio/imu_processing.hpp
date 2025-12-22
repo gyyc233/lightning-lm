@@ -17,7 +17,7 @@
 
 namespace lightning {
 
-/// IMU处理类
+/// IMU处理类 imu初始化，点云去畸变功能
 class ImuProcess {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -38,7 +38,7 @@ class ImuProcess {
 
     double GetMeanAccNorm() const { return mean_acc_.norm(); }
 
-    Eigen::Matrix<double, 12, 12> Q_;
+    Eigen::Matrix<double, 12, 12> Q_; // 过程噪声协方差矩阵
     Vec3d cov_acc_;
     Vec3d cov_gyr_;
     Vec3d cov_acc_scale_;
@@ -47,7 +47,16 @@ class ImuProcess {
     Vec3d cov_bias_acc_;
 
    private:
+    /// @brief imu 静止初始化
+    /// @param meas 
+    /// @param kf_state 
+    /// @param N 
     void IMUInit(const MeasureGroup &meas, ESKF &kf_state, int &N);
+
+    /// @brief 校正激光雷达扫描过程中由于传感器运动造成的点云畸变
+    /// @param meas 
+    /// @param kf_state 
+    /// @param pcl_out 
     void UndistortPcl(const MeasureGroup &meas, ESKF &kf_state, CloudPtr &pcl_out);
 
     static inline constexpr int max_init_count_ = 20;
@@ -72,6 +81,7 @@ class ImuProcess {
 
 inline ImuProcess::ImuProcess() : b_first_frame_(true), imu_need_init_(true) {
     init_iter_num_ = 1;
+    // 初始化过程噪声协方差矩阵
     Q_.setZero();
     Q_.diagonal() << 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-5, 1e-5, 1e-5, 1e-5, 1e-5, 1e-5;
     cov_acc_ = Vec3d(0.1, 0.1, 0.1);
@@ -115,6 +125,7 @@ inline void ImuProcess::IMUInit(const MeasureGroup &meas, ESKF &kf_state, int &N
     /** 1. initializing the gravity_, gyro bias, acc and gyro covariance
      ** 2. normalize the acceleration measurenments to unit gravity_ **/
 
+    // imu 静止初始化
     Vec3d cur_acc, cur_gyr;
 
     if (b_first_frame_) {
@@ -127,6 +138,7 @@ inline void ImuProcess::IMUInit(const MeasureGroup &meas, ESKF &kf_state, int &N
         mean_gyr_ = gyr_acc;
     }
 
+    // 在线统计陀螺仪，加计的初始协方差
     for (const auto &imu : meas.imu_) {
         const auto &imu_acc = imu->linear_acceleration;
         const auto &gyr_acc = imu->angular_velocity;
@@ -144,21 +156,25 @@ inline void ImuProcess::IMUInit(const MeasureGroup &meas, ESKF &kf_state, int &N
         N++;
     }
 
+    // ESKF 状态初始化
     auto init_state = kf_state.GetX();
     init_state.timestamp_ = meas.imu_.back()->timestamp;
+    // 加计测量值归一化为重力
     init_state.grav_ = S2(-mean_acc_ / mean_acc_.norm() * G_m_s2);
-    init_state.bg_ = mean_gyr_;
+    init_state.bg_ = mean_gyr_; // 静止角速度均值作为陀螺仪零偏
     init_state.offset_t_lidar_ = t_lidar_mu_;
     init_state.offset_R_lidar_ = R_lidar_imu_;
     kf_state.ChangeX(init_state);
 
+    // ESKF 初始协方差定义
     auto init_P = kf_state.GetP();
     init_P.setIdentity();
-    init_P(6, 6) = init_P(7, 7) = init_P(8, 8) = 0.00001;
-    init_P(9, 9) = init_P(10, 10) = init_P(11, 11) = 0.00001;
-    init_P(15, 15) = init_P(16, 16) = init_P(17, 17) = 0.0001;
-    init_P(18, 18) = init_P(19, 19) = init_P(20, 20) = 0.001;
-    init_P(21, 21) = init_P(22, 22) = 0.00001;
+    init_P(6, 6) = init_P(7, 7) = init_P(8, 8) = 0.00001; // 外参 rot
+    init_P(9, 9) = init_P(10, 10) = init_P(11, 11) = 0.00001; // 外参 transition
+    init_P(15, 15) = init_P(16, 16) = init_P(17, 17) = 0.0001; // b_g cov
+    init_P(18, 18) = init_P(19, 19) = init_P(20, 20) = 0.001; // b_a cov
+    init_P(21, 21) = init_P(22, 22) = 0.00001; // gravity cov
+    // 剩下的 P R V 初始为1
     kf_state.ChangeP(init_P);
 
     last_imu_ = meas.imu_.back();
@@ -166,6 +182,8 @@ inline void ImuProcess::IMUInit(const MeasureGroup &meas, ESKF &kf_state, int &N
 
 inline void ImuProcess::UndistortPcl(const MeasureGroup &meas, ESKF &kf_state, CloudPtr &pcl_out) {
     /*** add the imu_ of the last frame-tail to the of current frame-head ***/
+    // 将上一帧尾部的 imu_ 添加到当前帧头部
+
     auto v_imu = meas.imu_;
     v_imu.push_front(last_imu_);
     const double &imu_end_time = v_imu.back()->timestamp;
@@ -194,9 +212,11 @@ inline void ImuProcess::UndistortPcl(const MeasureGroup &meas, ESKF &kf_state, C
             continue;
         }
 
+        // 中值积分
         angvel_avr = .5 * (head->angular_velocity + tail->angular_velocity);
         acc_avr = .5 * (head->linear_acceleration + tail->linear_acceleration);
 
+        // 加速度归一化
         acc_avr = acc_avr * G_m_s2 / mean_acc_.norm();  // - state_inout.ba;
 
         if (head->timestamp < last_lidar_end_time_) {
@@ -214,11 +234,12 @@ inline void ImuProcess::UndistortPcl(const MeasureGroup &meas, ESKF &kf_state, C
             break;
         }
 
+        // 过程噪声
         Q_.block<3, 3>(0, 0).diagonal() = cov_gyr_;
         Q_.block<3, 3>(3, 3).diagonal() = cov_acc_;
         Q_.block<3, 3>(6, 6).diagonal() = cov_bias_gyr_;
         Q_.block<3, 3>(9, 9).diagonal() = cov_bias_acc_;
-        kf_state.Predict(dt, Q_, gyro, acc);
+        kf_state.Predict(dt, Q_, gyro, acc); // EKF 状态更新
 
         // LOG(INFO) << "gyro: " << gyro.transpose() << ", dt: " << dt;
 
@@ -226,6 +247,7 @@ inline void ImuProcess::UndistortPcl(const MeasureGroup &meas, ESKF &kf_state, C
         //           << ", vel: " << kf_state.GetX().vel_.transpose() << ", dt: " << dt;
 
         /* save the poses at each IMU measurements */
+        // 保存每个imu时刻的状态信息，用于后续补偿
         imu_state = kf_state.GetX();
         angvel_last_ = angvel_avr - imu_state.bg_;
         acc_s_last_ = imu_state.rot_ * (acc_avr - imu_state.ba_);
@@ -241,13 +263,14 @@ inline void ImuProcess::UndistortPcl(const MeasureGroup &meas, ESKF &kf_state, C
     /*** calculated the pos and attitude prediction at the frame-end ***/
     double note = pcl_end_time > imu_end_time ? 1.0 : -1.0;
     dt = note * (pcl_end_time - imu_end_time);
-    kf_state.Predict(dt, Q_, gyro, acc);
+    kf_state.Predict(dt, Q_, gyro, acc); // 帧末状态预测，上面for循环中并没有统计最后一帧
 
     imu_state = kf_state.GetX();
     last_imu_ = meas.imu_.back();
     last_lidar_end_time_ = pcl_end_time;
 
     /*** sort point clouds by offset time ***/
+    // 点云按时间戳顺序排列
     pcl_out = meas.scan_;
     std::sort(pcl_out->points.begin(), pcl_out->points.end(),
               [](const PointType &p1, const PointType &p2) { return p1.time < p2.time; });
@@ -259,6 +282,7 @@ inline void ImuProcess::UndistortPcl(const MeasureGroup &meas, ESKF &kf_state, C
 
     auto it_pcl = pcl_out->points.end() - 1;
     for (auto it_kp = imu_pose_.end() - 1; it_kp != imu_pose_.begin(); it_kp--) {
+        // 从后往前的连续两个imu状态
         auto head = it_kp - 1;
         auto tail = it_kp;
         R_imu = (head->rot);
@@ -274,16 +298,22 @@ inline void ImuProcess::UndistortPcl(const MeasureGroup &meas, ESKF &kf_state, C
              * Note: Compensation direction is INVERSE of Frame's moving direction
              * So if we want to compensate a point at timestamp-i to the frame-e
              * p_compensate = R_imu_e ^ T * (R_i * P_i + T_ei) where T_ei is represented in global frame */
+
+            // 角速度积分得到中间时刻旋转
             Mat3d R_i(R_imu * math::exp(angvel_avr, dt).matrix());
 
             Vec3d P_i(it_pcl->x, it_pcl->y, it_pcl->z);
-            Vec3d T_ei(pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt - imu_state.pos_);
+            Vec3d T_ei(pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt - imu_state.pos_); // imu在时间间隔内的位移
+
+            // R_i * (imu_state.offset_R_lidar_ * P_i + imu_state.offset_t_lidar_) lidar点转imu坐标系
+            // 乘以imu该时刻的旋转 R_i 加平移 T_ei
+            // 转到imu结束时刻的的坐标系 imu_state.rot_.inverse()，再变回lidar坐标系 - imu_state.offset_t_lidar_,以及imu_state.offset_R_lidar_.inverse() 
             Vec3d p_compensate = imu_state.offset_R_lidar_.inverse() *
                                  (imu_state.rot_.inverse() *
                                       (R_i * (imu_state.offset_R_lidar_ * P_i + imu_state.offset_t_lidar_) + T_ei) -
                                   imu_state.offset_t_lidar_);  // not accurate!
 
-            // save Undistorted points and their rotation
+            // save Undistorted points and their rotation 保存去畸变后点
             it_pcl->x = p_compensate(0);
             it_pcl->y = p_compensate(1);
             it_pcl->z = p_compensate(2);
@@ -301,7 +331,7 @@ inline void ImuProcess::Process(const MeasureGroup &meas, ESKF &kf_state, CloudP
     }
 
     if (imu_need_init_) {
-        /// The very first lidar frame
+        /// The very first lidar frame The very 起到强调作用
         IMUInit(meas, kf_state, init_iter_num_);
 
         imu_need_init_ = true;

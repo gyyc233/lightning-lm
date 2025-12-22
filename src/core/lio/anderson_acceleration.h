@@ -12,8 +12,8 @@
 namespace lightning {
 /**
  * AA 加速器
- * @tparam S Scalar type
- * @tparam D dimension
+ * @tparam S Scalar type 标量类型
+ * @tparam D dimension 向量维度
  * @tparam m 允许前多少次迭代, 最多10次，不允许动态设置，只能编译期设置
  */
 template <typename S, int D, int m>
@@ -32,24 +32,29 @@ class AndersonAcceleration {
     Vec compute(const Vec& g) {
         assert(iter_ >= 0);
         Vec G = g;
-        current_F_ = G - current_u_;
+        current_F_ = G - current_u_; // 计算残差
 
+        // 首次迭代
         if (iter_ == 0) {
             prev_dF_.col(0) = -current_F_;
             prev_dG_.col(0) = -G;
             current_u_ = G;
         } else {
+            // 更新差分信息
             prev_dF_.col(col_idx_) += current_F_;
             prev_dG_.col(col_idx_) += G;
 
             Scalar eps = 1e-14;
-            Scalar scale = std::max(eps, prev_dF_.col(col_idx_).norm());
+            Scalar scale = std::max(eps, prev_dF_.col(col_idx_).norm()); // 防止数值过小
+            // 列向量归一化
             dF_scale_(col_idx_) = scale;
             prev_dF_.col(col_idx_) /= scale;
 
+            // 根据当前迭代次数，确定当前使用的历史窗口大小，
             int m_k = std::min(m, iter_);
 
             if (m_k == 1) {
+                // 只有一条历史信息
                 theta_(0) = 0;
                 Scalar dF_sqrnorm = prev_dF_.col(col_idx_).squaredNorm();
                 M_(0, 0) = dF_sqrnorm;
@@ -60,18 +65,23 @@ class AndersonAcceleration {
                 }
             } else {
                 // Update the normal equation matrix, for the column and row corresponding to the new dF column
+                // prev_dF_.col(col_idx_) 差分信息
                 VecXd new_inner_prod = (prev_dF_.col(col_idx_).transpose() * prev_dF_.block(0, 0, D, m_k)).transpose();
+                // 构建法方程矩阵
                 M_.block(col_idx_, 0, 1, m_k) = new_inner_prod.transpose();
                 M_.block(0, col_idx_, m_k, 1) = new_inner_prod;
 
                 // Solve normal equation
                 cod_.compute(M_.block(0, 0, m_k, m_k));
+                // 完全正交分解求解线性系统，得到最优系数向量
                 theta_.head(m_k) = cod_.solve(prev_dF_.block(0, 0, D, m_k).transpose() * current_F_);
             }
 
-            // Use rescaled theta to compute new u
+            // Use rescaled theta to compute new u 逆缩放恢复
             current_u_ =
                 G - prev_dG_.block(0, 0, D, m_k) * ((theta_.head(m_k).array() / dF_scale_.head(m_k).array()).matrix());
+            
+            // 更新缓冲区
             col_idx_ = (col_idx_ + 1) % D;
             prev_dF_.col(col_idx_) = -current_F_;
             prev_dG_.col(col_idx_) = -G;
@@ -112,15 +122,16 @@ class AndersonAcceleration {
 
    private:
     Vec current_u_ = Vec::Zero();  // 当前的更新
-    Vec current_F_ = Vec::Zero();
+    Vec current_F_ = Vec::Zero(); // 当前残差
     MatDM prev_dG_ = MatDM::Zero();
     MatDM prev_dF_ = MatDM::Zero();
-    MatDD M_ = MatDD::Zero();                            // Normal equations matrix for the computing theta
-    Vec theta_ = Vec::Zero();                            // theta value computed from normal equations
-    Vec dF_scale_ = Vec::Zero();                         // The scaling factor for each column of prev_dF
+    MatDD M_ = MatDD::Zero(); // Normal equations matrix for the computing theta 法方程矩阵，用于求解最优系数
+    Vec theta_ = Vec::Zero(); // theta value computed from normal equations 法方程解
+    Vec dF_scale_ = Vec::Zero(); // The scaling factor for each column of prev_dF 每列的缩放系数
+    // CompleteOrthogonalDecomposition 完全正交分解
     Eigen::CompleteOrthogonalDecomposition<MatXd> cod_;  // should use MatXd because iteration changes
-    int iter_ = 0;                                       // Iteration count since initialization
-    int col_idx_ = -1;                                   // Index for history matrix column to store the next value
+    int iter_ = 0; // Iteration count since initialization 迭代计数器
+    int col_idx_ = -1; // Index for history matrix column to store the next value
 };
 
 }  // namespace lightning

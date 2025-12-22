@@ -7,14 +7,14 @@
 namespace lightning {
 
 void ESKF::Predict(const double& dt, const ESKF::ProcessNoiseType& Q, const Vec3d& gyro, const Vec3d& acce) {
-    Eigen::Matrix<double, 24, 1> f_ = x_.get_f(gyro, acce);  // 调用get_f 获取 速度 角速度 加速度
-    Eigen::Matrix<double, 24, 23> f_x_ = x_.df_dx(acce);
+    Eigen::Matrix<double, 24, 1> f_ = x_.get_f(gyro, acce);  // 获取位置，旋转，速度的变化率
+    Eigen::Matrix<double, 24, 23> f_x_ = x_.df_dx(acce); // 状态转移的jacobian
 
-    Eigen::Matrix<double, 24, 12> f_w_ = x_.df_dw();
+    Eigen::Matrix<double, 24, 12> f_w_ = x_.df_dw(); // 过程噪声转移矩阵：速度，旋转，陀螺仪零偏，加计零偏
     Eigen::Matrix<double, 23, process_noise_dim_> f_w_final;
 
     NavState x_before = x_;
-    x_.oplus(f_, dt);
+    x_.oplus(f_, dt); // 积分更新名义状态量
 
     F_x1_ = CovType::Identity();
 
@@ -49,7 +49,7 @@ void ESKF::Predict(const double& dt, const ESKF::ProcessNoiseType& Q, const Vec3
 
         F_x1_.block<3, 3>(idx, idx) = math::exp(seg_SO3, 0.5).matrix();
 
-        res_temp_SO3 = math::A_matrix(seg_SO3);
+        res_temp_SO3 = math::A_matrix(seg_SO3); // 应用左扰动模型的jacobian
         for (int i = 0; i < state_dim_; i++) {
             f_x_final.template block<3, 1>(idx, i) = res_temp_SO3 * (f_x_.block<3, 1>(dim, i));
         }
@@ -59,6 +59,7 @@ void ESKF::Predict(const double& dt, const ESKF::ProcessNoiseType& Q, const Vec3
         }
     }
 
+    // S2球面状态 重力方向处理，在S2流形上应用jacobian计算
     Eigen::Matrix<double, 2, 3> res_temp_S2;
     Vec3d seg_S2;
     for (auto st : x_.S2_states_) {
@@ -87,7 +88,7 @@ void ESKF::Predict(const double& dt, const ESKF::ProcessNoiseType& Q, const Vec3
         }
     }
 
-    F_x1_ += f_x_final * dt;
+    F_x1_ += f_x_final * dt; // 协方差传播
     P_ = (F_x1_)*P_ * (F_x1_).transpose() + (dt * f_w_final) * Q * (dt * f_w_final).transpose();
 }
 
@@ -120,8 +121,11 @@ void ESKF::Update(ESKF::ObsType obs, const double& R) {
     static double iterated_num = 0;
     static double update_num = 0;
     update_num += 1;
+
     for (int i = -1; i < maximum_iter_; i++) {
         custom_obs_model_.valid_ = true;
+
+        // 根据不同观测类型，调用相应观测函数
 
         /// 计算observation function，主要是residual_, h_x_, s_
         /// x_ 在每次迭代中都是更新的，线性化点也会更新
@@ -137,6 +141,8 @@ void ESKF::Update(ESKF::ObsType obs, const double& R) {
             bias_obs_func_(x_, custom_obs_model_);
         }
 
+        // Anderson Acceleration 检查
+        // 如果启用AA且残差增大，则回退并终止迭代
         if (use_aa_ && i > -1 && (obs == ObsType::LIDAR || obs == ObsType::WHEEL_SPEED_AND_LIDAR) &&
             custom_obs_model_.lidar_residual_mean_ >= last_lidar_res * 1.01) {
             x_ = last_x;
@@ -210,6 +216,7 @@ void ESKF::Update(ESKF::ObsType obs, const double& R) {
             h_x_cur.topLeftCorner(dof_measurement, 12) = custom_obs_model_.h_x_;
             custom_obs_model_.R_ = R * Eigen::MatrixXd::Identity(dof_measurement, dof_measurement);
 
+            // kalman gain
             Eigen::MatrixXd K =
                 P_ * h_x_cur.transpose() * (h_x_cur * P_ * h_x_cur.transpose() + custom_obs_model_.R_).inverse();
             K_r = K * custom_obs_model_.residual_;
@@ -235,7 +242,7 @@ void ESKF::Update(ESKF::ObsType obs, const double& R) {
             K_H.template block<23, 12>(0, 0) = Q_inv.template block<23, 12>(0, 0) * HTH;
         }
 
-        // dx = Kr + (KH-I) dx
+        // dx = Kr + (KH-I) dx 状态量更新
         dx_current = K_r + (K_H - Eigen::Matrix<double, 23, 23>::Identity()) * dx_current;
 
         // check nan
@@ -267,6 +274,7 @@ void ESKF::Update(ESKF::ObsType obs, const double& R) {
         last_lidar_res = custom_obs_model_.lidar_residual_mean_;
         custom_obs_model_.converge_ = true;
 
+        // 收敛判断
         for (int j = 0; j < 23; j++) {
             if (std::fabs(dx_current[j]) > limit_[j]) {
                 custom_obs_model_.converge_ = false;
@@ -336,6 +344,7 @@ void ESKF::Update(ESKF::ObsType obs, const double& R) {
                 }
             }
 
+            // 协方差更新
             P_ = L_ - K_H.block<23, 15>(0, 0) * P_.template block<15, 23>(0, 0);
 
             break;

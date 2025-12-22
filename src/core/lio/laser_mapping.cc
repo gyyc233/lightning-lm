@@ -410,11 +410,13 @@ bool LaserMapping::SyncPackages() {
             LOG(WARNING) << "Too few input point cloud!";
             lidar_end_time_ = measures_.lidar_begin_time_ + lidar_mean_scantime_;
         } else if (measures_.scan_->points.back().time / double(1000) < 0.5 * lidar_mean_scantime_) {
+            // 扫描时间异常短，使用平均扫描时间估计结束时间
             lidar_end_time_ = measures_.lidar_begin_time_ + lidar_mean_scantime_;
         } else {
             scan_num_++;
             // 根据最后一个点的时间戳计算实际扫描时间
             lidar_end_time_ = measures_.lidar_begin_time_ + measures_.scan_->points.back().time / double(1000);
+            // 在线更新平均扫描时间
             lidar_mean_scantime_ +=
                 (measures_.scan_->points.back().time / double(1000) - lidar_mean_scantime_) / scan_num_;
         }
@@ -445,6 +447,7 @@ bool LaserMapping::SyncPackages() {
         imu_buffer_.pop_front();
     }
 
+    // 缓冲区清理
     lidar_buffer_.pop_front();
     time_buffer_.pop_front();
     // 重置标志处理下一帧lidar

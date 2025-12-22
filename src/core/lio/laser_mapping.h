@@ -113,6 +113,9 @@ class LaserMapping {
 
     void ObsModel(NavState &s, ESKF::CustomObservationModel &obs);
 
+    /// @brief lidar点转到世界坐标系
+    /// @param pi 
+    /// @param po 
     inline void PointBodyToWorld(const PointType &pi, PointType &po) {
         Vec3d p_global(state_point_.rot_ * (state_point_.offset_R_lidar_ * pi.getVector3fMap().cast<double>() +
                                             state_point_.offset_t_lidar_) +
@@ -150,7 +153,7 @@ class LaserMapping {
     std::string map_file_path_;
 
     std::vector<Keyframe::Ptr> all_keyframes_;
-    Keyframe::Ptr last_kf_ = nullptr;
+    Keyframe::Ptr last_kf_ = nullptr; // 最后一个关键帧
     int kf_id_ = 0;
 
     /// point clouds data
@@ -167,10 +170,10 @@ class LaserMapping {
     std::vector<Vec4f> plane_coef_;          // plane coeffs
 
     std::mutex mtx_buffer_;
-    std::deque<double> time_buffer_;
+    std::deque<double> time_buffer_; // 时间戳缓冲队列
 
-    std::deque<PointCloudType::Ptr> lidar_buffer_;
-    std::deque<lightning::IMUPtr> imu_buffer_;
+    std::deque<PointCloudType::Ptr> lidar_buffer_; // lidar数据缓冲队列
+    std::deque<lightning::IMUPtr> imu_buffer_; // imu数据缓冲队列
 
     /// options
     bool keep_first_imu_estimation_ = false;    // 在没有建立地图前，是否要使用前几帧的IMU状态
