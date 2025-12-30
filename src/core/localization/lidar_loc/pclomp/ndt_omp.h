@@ -46,6 +46,8 @@
 
 #include "voxel_grid_covariance_omp.h"
 
+// 基于OpenMP并行优化的3D正态分布变换(NDT)配准算法
+
 namespace pclomp {
 enum NeighborSearchMethod { DIRECT26,
                             DIRECT7,
@@ -64,6 +66,7 @@ enum NeighborSearchMethod { DIRECT26,
  */
 template <typename PointSource, typename PointTarget>
 class NormalDistributionsTransform : public pcl::Registration<PointSource, PointTarget> {
+// 继承了PCL的配准类，支持不同点类型
  protected:
   typedef typename pcl::Registration<PointSource, PointTarget>::PointCloudSource PointCloudSource;
   typedef typename PointCloudSource::Ptr PointCloudSourcePtr;
@@ -76,13 +79,13 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
   typedef pcl::PointIndices::Ptr PointIndicesPtr;
   typedef pcl::PointIndices::ConstPtr PointIndicesConstPtr;
 
-  /** \brief Typename of searchable voxel grid containing mean and covariance. */
+  /** \brief Typename of searchable voxel grid containing mean and covariance. 包含均值和协方差的可搜索体素网格的类型名*/
   typedef pclomp::VoxelGridCovariance<PointTarget> TargetGrid;
   /** \brief Typename of pointer to searchable voxel grid. */
   typedef TargetGrid *TargetGridPtr;
   /** \brief Typename of const pointer to searchable voxel grid. */
   typedef const TargetGrid *TargetGridConstPtr;
-  /** \brief Typename of const pointer to searchable voxel grid leaf. */
+  /** \brief Typename of const pointer to searchable voxel grid leaf. 常量指针*/
   typedef typename TargetGrid::LeafConstPtr TargetGridLeafConstPtr;
 
  public:
@@ -97,6 +100,8 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
   /** \brief Empty destructor */
   virtual ~NormalDistributionsTransform() {}
 
+  /// @brief 设置并行线程数
+  /// @param n 
   void setNumThreads(int n) { num_threads_ = n; }
 
   /** \brief Provide a pointer to the input target (e.g., the point cloud that we want to align the input source to).
@@ -107,7 +112,7 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
     // init();
   }
 
-  /** \brief Set/change the voxel grid resolution.
+  /** \brief Set/change the voxel grid resolution. 设置体素分辨率
    * \param[in] resolution side length of voxels
    */
   inline void setResolution(float resolution) {
@@ -261,7 +266,7 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
 
   using pcl::Registration<PointSource, PointTarget>::update_visualizer_;
 
-  /** \brief Estimate the transformation and returns the transformed source (input) as output.
+  /** \brief Estimate the transformation and returns the transformed source (input) as output. 估计变换并将变换后的源（输入）作为输出返回
    * \param[out] output the resultant input transfomed point cloud dataset
    */
   virtual void computeTransformation(PointCloudSource &output) {
@@ -283,7 +288,7 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
   }
 
   /** \brief Compute derivatives of probability function w.r.t. the transformation vector.
-   * \note Equation 6.10, 6.12 and 6.13 [Magnusson 2009].
+   * \note 计算概率函数相对于变换向量的导数 Equation 6.10, 6.12 and 6.13 [Magnusson 2009].
    * \param[out] score_gradient the gradient vector of the probability function w.r.t. the transformation vector
    * \param[out] hessian the hessian matrix of the probability function w.r.t. the transformation vector
    * \param[in] trans_cloud transformed point cloud
@@ -294,6 +299,7 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
                             PointCloudSource &trans_cloud, Eigen::Matrix<double, 6, 1> &p,
                             bool compute_hessian = true);
 
+  // 计算各个点对概率函数关于变换的导数的贡献
   /** \brief Compute individual point contirbutions to derivatives of probability function w.r.t. the transformation
    * vector. \note Equation 6.10, 6.12 and 6.13 [Magnusson 2009]. \param[in,out] score_gradient the gradient vector of
    * the probability function w.r.t. the transformation vector \param[in,out] hessian the hessian matrix of the
@@ -306,14 +312,14 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
                            const Eigen::Matrix<float, 24, 6> &point_hessian_, const Eigen::Vector3d &x_trans,
                            const Eigen::Matrix3d &c_inv, bool compute_hessian = true) const;
 
-  /** \brief Precompute anglular components of derivatives.
+  /** \brief Precompute anglular components of derivatives.预计算与旋转角度相关的导数项
    * \note Equation 6.19 and 6.21 [Magnusson 2009].
    * \param[in] p the current transform vector
    * \param[in] compute_hessian flag to calculate hessian, unnessissary for step calculation.
    */
   void computeAngleDerivatives(Eigen::Matrix<double, 6, 1> &p, bool compute_hessian = true);
 
-  /** \brief Compute point derivatives.
+  /** \brief Compute point derivatives. 预计算单个点的一阶二阶导数，点相对于6维变换向量的 jacobian, hessian
    * \note Equation 6.18-21 [Magnusson 2009].
    * \param[in] x point from the input cloud
    * \param[in] compute_hessian flag to calculate hessian, unnessissary for step calculation.
@@ -342,7 +348,7 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
                      const Eigen::Matrix<double, 18, 6> &point_hessian_, const Eigen::Vector3d &x_trans,
                      const Eigen::Matrix3d &c_inv) const;
 
-  /** \brief Compute line search step length and update transform and probability derivatives using More-Thuente
+  /** \brief Compute line search step length and update transform and probability derivatives using More-Thuente 计算线搜索步长并更新变换和概率导数
    * method. \note Search Algorithm [More, Thuente 1994] \param[in] x initial transformation vector, \f$ x \f$ in
    * Equation 1.3 (Moore, Thuente 1994) and \f$ \vec{p} \f$ in Algorithm 2 [Magnusson 2009] \param[in] step_dir
    * descent direction, \f$ p \f$ in Equation 1.3 (Moore, Thuente 1994) and \f$ \delta \vec{p} \f$ normalized in
@@ -423,28 +429,29 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
   inline double auxilaryFunction_dPsiMT(double g_a, double g_0, double mu = 1.e-4) { return (g_a - mu * g_0); }
 
   /** \brief The voxel grid generated from target cloud containing point means and covariances. */
-  TargetGrid target_cells_;
+  TargetGrid target_cells_; // 从包含点均值和协方差的目标点云生成的体素网格
 
   // double fitness_epsilon_;
 
-  /** \brief The side length of voxels. */
+  /** \brief The side length of voxels. 体素网格分辨率*/
   float resolution_;
 
-  /** \brief The maximum step length. */
+  /** \brief The maximum step length. 牛顿线搜索最大步长*/
   double step_size_;
 
   /** \brief The ratio of outliers of points w.r.t. a normal distribution, Equation 6.7 [Magnusson 2009]. */
-  double outlier_ratio_;
+  double outlier_ratio_; // 点云异常值比例
 
   /** \brief The normalization constants used fit the point distribution to a normal distribution, Equation 6.8
    * [Magnusson 2009]. */
+  // 使用归一化常数将点分布拟合位正态分布
   double gauss_d1_, gauss_d2_, gauss_d3_;
 
   /** \brief The probability score of the transform applied to the input cloud, Equation 6.9 and 6.10 [Magnusson
    * 2009]. */
   double trans_probability_;
 
-  /** \brief Precomputed Angular Gradient
+  /** \brief Precomputed Angular Gradient 预计算角度梯度
    *
    * The precomputed angular derivatives for the jacobian of a transformation vector, Equation 6.19 [Magnusson 2009].
    */
@@ -452,7 +459,7 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
 
   Eigen::Matrix<float, 8, 4> j_ang;
 
-  /** \brief Precomputed Angular Hessian
+  /** \brief Precomputed Angular Hessian 预计算角度hessian
    *
    * The precomputed angular derivatives for the hessian of a transformation vector, Equation 6.19 [Magnusson 2009].
    */
@@ -469,8 +476,9 @@ class NormalDistributionsTransform : public pcl::Registration<PointSource, Point
    * Equation 6.20 [Magnusson 2009]. */
   //      Eigen::Matrix<double, 18, 6> point_hessian_;
 
-  int num_threads_;
+  int num_threads_; // 并行线程数
 
+  // 掩码
   bool mask_xyz_;
   bool mask_xy_;
   bool mask_rp_;

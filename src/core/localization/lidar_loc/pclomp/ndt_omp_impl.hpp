@@ -76,7 +76,7 @@ pclomp::NormalDistributionsTransform<PointSource, PointTarget>::NormalDistributi
       h_ang_f1_(),
       h_ang_f2_(),
       h_ang_f3_() {
-  this->reg_name_ = "NormalDistributionsTransform";
+  this->reg_name_ = "NormalDistributionsTransform"; // 注册
 
   mask_xyz_              = false;
   mask_xy_               = false;
@@ -99,16 +99,19 @@ pclomp::NormalDistributionsTransform<PointSource, PointTarget>::NormalDistributi
   max_iterations_         = 35;
 
   search_method = DIRECT7;
-  num_threads_  = omp_get_max_threads();
+  num_threads_  = omp_get_max_threads(); // 获取系统最大线程数用于并行计算
 
   this->force_no_recompute_ = true;
-  target_cells_.setLeafSize(resolution_, resolution_, resolution_);
+  target_cells_.setLeafSize(resolution_, resolution_, resolution_); // 设置体素网格大小
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 template <typename PointSource, typename PointTarget>
 void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeTransformation(
     PointCloudSource &output, const Eigen::Matrix4f &guess) {
+  // 基于正态分布变换的点云配准
+
+  // 重置迭代计数器豫收敛标志
   nr_iterations_ = 0;
   converged_     = false;
 
@@ -121,6 +124,7 @@ void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeTran
   gauss_d1_ = -log(gauss_c1 + gauss_c2) - gauss_d3_;
   gauss_d2_ = -2 * log((-log(gauss_c1 * exp(-0.5) + gauss_c2) - gauss_d3_) / gauss_d1_);
 
+  // 如果提供了初始猜测，则应用该变换到输出点云
   if (guess != Eigen::Matrix4f::Identity()) {
     // Initialise final transformation to the guessed one
     final_transformation_ = guess;
@@ -132,6 +136,7 @@ void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeTran
   eig_transformation.matrix() = final_transformation_;
 
   // Convert initial guess matrix to 6 element transformation vector
+  // 将4x4变换矩阵转换为6维向量 [x, y, z, roll, pitch, yaw]
   Eigen::Matrix<double, 6, 1> p, delta_p, score_gradient;
   Eigen::Vector3f init_translation = eig_transformation.translation();
   Eigen::Vector3f init_rotation    = eig_transformation.rotation().eulerAngles(0, 1, 2);
@@ -145,12 +150,14 @@ void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeTran
   // std::cout<<"=======================================\n";
   // Calculate derivates of initial transform vector, subsequent derivative calculations are done in the step length
   // determination.
+  // 计算初始变换向量的导数，后续的导数计算在步长确定中进行
   score = computeDerivatives(score_gradient, hessian, output, p);
 
   while (!converged_) {
     // Store previous transformation
     previous_transformation_ = transformation_;
 
+    // 根据掩码限制特定自由度
     if (mask_rp_) {
       hessian.block<2, 6>(3, 0) *= 0.;
       hessian.block<6, 2>(0, 3) *= 0.;
@@ -190,7 +197,7 @@ void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeTran
     // Solve for decent direction using newton method, line 23 in Algorithm 2 [Magnusson 2009]
     Eigen::JacobiSVD<Eigen::Matrix<double, 6, 6>> sv(hessian, Eigen::ComputeFullU | Eigen::ComputeFullV);
     // Negative for maximization as opposed to minimization
-    delta_p = sv.solve(-score_gradient);
+    delta_p = sv.solve(-score_gradient); // 使用奇异值分解求解牛顿法方程，最速梯度下降
 
     // std::cout<<"score_gradient: \n" << score_gradient.transpose() <<"\n";
     // std::cout<<"delta_p: \n" << delta_p.transpose() <<"\n";
@@ -213,10 +220,12 @@ void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeTran
     }
 
     delta_p.normalize();
+    // 计算最优步长
     delta_p_norm = computeStepLengthMT(p, delta_p, delta_p_norm, step_size_, transformation_epsilon_ / 2, score,
                                        score_gradient, hessian, output);
     delta_p *= delta_p_norm;
 
+    // 变换矩阵更新
     transformation_ = (Eigen::Translation<float, 3>(static_cast<float>(delta_p(0)), static_cast<float>(delta_p(1)),
                                                     static_cast<float>(delta_p(2))) *
                        Eigen::AngleAxis<float>(static_cast<float>(delta_p(3)), Eigen::Vector3f::UnitX()) *
@@ -224,13 +233,14 @@ void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeTran
                        Eigen::AngleAxis<float>(static_cast<float>(delta_p(5)), Eigen::Vector3f::UnitZ()))
                           .matrix();
 
-    p = p + delta_p;
+    p = p + delta_p; // 增量更新
 
     // Update Visualizer (untested)
     if (update_visualizer_ != 0) {
       update_visualizer_(output, std::vector<int>(), *target_, std::vector<int>());
     }
 
+    // 收敛判断
     if (nr_iterations_ > max_iterations_ ||
         (nr_iterations_ && (std::fabs(delta_p_norm) < transformation_epsilon_))) {
       converged_ = true;
@@ -255,15 +265,20 @@ template <typename PointSource, typename PointTarget>
 double pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeDerivatives(
     Eigen::Matrix<double, 6, 1> &score_gradient, Eigen::Matrix<double, 6, 6> &hessian, PointCloudSource &trans_cloud,
     Eigen::Matrix<double, 6, 1> &p, bool compute_hessian) {
+  // 计算变换向量的得分，梯度，hessian
   score_gradient.setZero();
   hessian.setZero();
   double score = 0;
 
   std::vector<double> scores(num_threads_);
+  // STL 容器的内存申请默认是 std::allocator，并没有内存对齐
+  // 因此使用 Eigen 类型的STL容器的时候必须指定 Eigen::aligned_allocator 用于内存对齐
   std::vector<Eigen::Matrix<double, 6, 1>, Eigen::aligned_allocator<Eigen::Matrix<double, 6, 1>>> score_gradients(
       num_threads_);
   std::vector<Eigen::Matrix<double, 6, 6>, Eigen::aligned_allocator<Eigen::Matrix<double, 6, 6>>> hessians(
       num_threads_);
+
+  // 为每个线程分配独立空间，避免线程间竞争
   for (int i = 0; i < num_threads_; i++) {
     scores[i] = 0;
     score_gradients[i].setZero();
@@ -331,17 +346,20 @@ double pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeDe
 
       x_trans = Eigen::Vector3d(x_trans_pt.x, x_trans_pt.y, x_trans_pt.z);
 
-      // Denorm point, x_k' in Equations 6.12 and 6.13 [Magnusson 2009]
+      // 去中心化 Denorm point, x_k' in Equations 6.12 and 6.13 [Magnusson 2009]
       x_trans -= cell->getMean();
-      // Uses precomputed covariance for speed.
+      // 获取预计算的逆协方差矩阵 Uses precomputed covariance for speed.
       c_inv = cell->getInverseCov();
       // c_inv = Eigen::Matrix3d::Identity(); //anjiss cov
 
       // Compute derivative of transform function w.r.t. transform vector, J_E and H_E in Equations 6.18 and 6.20
       // [Magnusson 2009]
+      // 计算该点落在该体素的概率
       computePointDerivatives(x, point_gradient_, point_hessian_);
       // Update score, gradient and hessian, lines 19-21 in Algorithm 2, according to Equations 6.10, 6.12
       // and 6.13, respectively [Magnusson 2009]
+      // 将单个点的贡献累加到总梯度和海塞矩阵
+      // 更新得分，梯度与hessian
       score_pt += updateDerivatives(score_gradient_pt, hessian_pt, point_gradient_, point_hessian_, x_trans,
                                     c_inv, compute_hessian);
     }
@@ -351,6 +369,7 @@ double pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeDe
     hessians[thread_n].noalias() += hessian_pt;
   }
 
+  // 合并线程计算结果
   for (int i = 0; i < num_threads_; i++) {
     score += scores[i];
     score_gradient += score_gradients[i];
@@ -365,7 +384,10 @@ template <typename PointSource, typename PointTarget>
 void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeAngleDerivatives(
     Eigen::Matrix<double, 6, 1> &p, bool compute_hessian) {
   // Simplified math for near 0 angles
-  double cx, cy, cz, sx, sy, sz;
+  double cx, cy, cz, sx, sy, sz; // cos、sin
+
+  // p(3)、p(4)、p(5) 分别对应 x轴旋转角(roll)、y轴旋转角(pitch)、z轴旋转角(yaw)
+  // 对接近0的角度进行简化处理
   if (fabs(p(3)) < 10e-5) {
     // p(3) = 0;
     cx = 1.0;
@@ -393,6 +415,7 @@ void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeAngl
   }
 
   // Precomputed angular gradiant components. Letters correspond to Equation 6.19 [Magnusson 2009]
+  // 一阶导数预计算
   j_ang_a_ << (-sx * sz + cx * sy * cz), (-sx * cz - cx * sy * sz), (-cx * cy);
   j_ang_b_ << (cx * sz + sx * sy * cz), (cx * cz - sx * sy * sz), (-sx * cy);
   j_ang_c_ << (-sy * cz), sy * sz, cy;
@@ -412,6 +435,7 @@ void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computeAngl
   j_ang.row(6).noalias() = Eigen::Vector4f((cx * cz - sx * sy * sz), (-cx * sz - sx * sy * cz), 0, 0.0f);
   j_ang.row(7).noalias() = Eigen::Vector4f((sx * cz + cx * sy * sz), (cx * sy * cz - sx * sz), 0, 0.0f);
 
+  // 二阶导数hessian预计算
   if (compute_hessian) {
     // Precomputed angular hessian components. Letters correspond to Equation 6.21 and numbers correspond to row
     // index [Magnusson 2009]
@@ -469,6 +493,7 @@ void pclomp::NormalDistributionsTransform<PointSource, PointTarget>::computePoin
     bool compute_hessian) const {
   Eigen::Vector4f x4(x[0], x[1], x[2], 0.0f);
 
+  // 计算一阶导数
   // Calculate first derivative of Transformation Equation 6.17 w.r.t. transform vector p.
   // Derivative w.r.t. ith element of transform vector corresponds to column i, Equation 6.18 and 6.19 [Magnusson
   // 2009]
@@ -558,15 +583,19 @@ double pclomp::NormalDistributionsTransform<PointSource, PointTarget>::updateDer
     Eigen::Matrix<double, 6, 1> &score_gradient, Eigen::Matrix<double, 6, 6> &hessian,
     const Eigen::Matrix<float, 4, 6> &point_gradient4, const Eigen::Matrix<float, 24, 6> &point_hessian_,
     const Eigen::Vector3d &x_trans, const Eigen::Matrix3d &c_inv, bool compute_hessian) const {
+  // 3D点拓展为齐次坐标
   Eigen::Matrix<float, 1, 4> x_trans4(x_trans[0], x_trans[1], x_trans[2], 0.0f);
+  // 逆协方差矩阵拓展为4x4，左上角3x3为协方差矩阵，其他为0
   Eigen::Matrix4f c_inv4     = Eigen::Matrix4f::Zero();
   c_inv4.topLeftCorner(3, 3) = c_inv.cast<float>();
 
+  // 计算点在高斯分布中的概率密度
   float gauss_d2 = gauss_d2_;
 
   // e^(-d_2/2 * (x_k - mu_k)^T Sigma_k^-1 (x_k - mu_k)) Equation 6.9 [Magnusson 2009]
   float e_x_cov_x = exp(-gauss_d2 * x_trans4.dot(x_trans4 * c_inv4) * 0.5f);
   // Calculate probability of transtormed points existance, Equation 6.9 [Magnusson 2009]
+  // 计算变换点存在的概率
   float score_inc = -gauss_d1_ * e_x_cov_x;
 
   e_x_cov_x = gauss_d2 * e_x_cov_x;
