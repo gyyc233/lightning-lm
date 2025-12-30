@@ -47,14 +47,15 @@ class PointCloudPreprocess {
     void Oust64Handler(const sensor_msgs::msg::PointCloud2 ::SharedPtr &msg);
     void VelodyneHandler(const sensor_msgs::msg::PointCloud2 ::SharedPtr &msg);
 
-    PointCloudType cloud_full_, cloud_out_;
+    PointCloudType cloud_full_; // 完整点云
+    PointCloudType cloud_out_; // 处理后的输出点云
 
     LidarType lidar_type_ = LidarType::AVIA;
     int point_filter_num_ = 1;
-    int num_scans_ = 6;
-    double blind_ = 0.01;
-    float time_scale_ = 1e-3;
-    bool given_offset_time_ = false;
+    int num_scans_ = 6; // 扫描线数量
+    double blind_ = 0.01; // 盲区距离
+    float time_scale_ = 1e-3; // 时间尺度转换因子
+    bool given_offset_time_ = false; // 是否给定偏移时间
 };
 }  // namespace lightning
 

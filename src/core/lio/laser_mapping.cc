@@ -502,6 +502,7 @@ void LaserMapping::MapIncremental() {
             bool need_add = true;
             // 中心点周围的点密度检查
             float dist = math::calc_dist(point_world.getVector3fMap(), center);
+            // 避免在同一区域添加过多点云
             if (points_near.size() >= fasterlio::NUM_MATCH_POINTS) {
                 for (int readd_i = 0; readd_i < fasterlio::NUM_MATCH_POINTS; readd_i++) {
                     if (math::calc_dist(points_near[readd_i].getVector3fMap(), center) < dist + 1e-6) {
@@ -531,6 +532,7 @@ void LaserMapping::MapIncremental() {
  * Lidar point cloud registration
  * will be called by the eskf custom observation model
  * compute point-to-plane residual here
+ * 在ESKF自定义观测模型中调用lidar点配准，计算点到平面残差
  * @param s kf state
  * @param ekfom_data H matrix
  */
@@ -566,6 +568,7 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
                 // if (obs.converge_) {
                 // 对scan点搜索最邻近点
                 ivox_->GetClosestPoint(point_world, points_near, fasterlio::NUM_MATCH_POINTS);
+                // 邻近点数量是否满足
                 point_selected_surf_[i] = points_near.size() >= fasterlio::MIN_NUM_MATCH_POINTS;
 
                 // 对足够多的近邻点进行平面拟合，得到平面参数
@@ -577,6 +580,7 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
                 if (point_selected_surf_[i]) {
                     auto temp = point_world.getVector4fMap();
                     temp[3] = 1.0;
+                    // 计算点到平面的距离
                     float pd2 = plane_coef_[i].dot(temp);
 
                     // 通过距离权重验证点-平面对应关系的有效性，过滤不稳定匹配点
@@ -592,10 +596,11 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
         },
         "    ObsModel (Lidar Match)");
 
-    effect_feat_num_ = 0;
+    effect_feat_num_ = 0; // 有效点数量
 
     corr_pts_.resize(cnt_pts);
     corr_norm_.resize(cnt_pts);
+    // 将有效点和对应的平面法向量、残差保存到corr_pts_和corr_norm_中
     for (int i = 0; i < cnt_pts; i++) {
         if (point_selected_surf_[i]) {
             corr_norm_[effect_feat_num_] = plane_coef_[i];

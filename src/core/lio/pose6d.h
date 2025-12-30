@@ -21,12 +21,12 @@ struct Pose6D {
         rot = R;
     };
 
-    double offset_time = 0;
-    Vec3d acc = Vec3d::Zero();
-    Vec3d gyr = Vec3d::Zero();
-    Vec3d vel = Vec3d::Zero();
-    Vec3d pos = Vec3d::Zero();
-    Mat3d rot = Mat3d::Identity();
+    double offset_time = 0; // 时间偏移量
+    Vec3d acc = Vec3d::Zero(); // 加速度
+    Vec3d gyr = Vec3d::Zero(); // 角速度
+    Vec3d vel = Vec3d::Zero(); // 线速度
+    Vec3d pos = Vec3d::Zero(); // 位置
+    Mat3d rot = Mat3d::Identity(); // 旋转
 };
 
 }  // namespace lightning

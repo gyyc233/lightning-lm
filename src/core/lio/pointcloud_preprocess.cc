@@ -45,6 +45,7 @@ void PointCloudPreprocess::Process(const livox_ros_driver2::msg::CustomMsg::Shar
     }
 
     std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const uint &i) {
+        // 检查点的线数是否在有效范围 && 点标签的有效性
         if ((msg->points[i].line < num_scans_) &&
             ((msg->points[i].tag & 0x30) == 0x10 || (msg->points[i].tag & 0x30) == 0x00)) {
             if (i % point_filter_num_ == 0) {
@@ -54,8 +55,10 @@ void PointCloudPreprocess::Process(const livox_ros_driver2::msg::CustomMsg::Shar
                 cloud_full_[i].intensity = msg->points[i].reflectivity;
 
                 // use curvature as time of each laser points, curvature unit: ms
+                // 使用曲率作为每个激光点的时间，曲率单位：ms
                 cloud_full_[i].time = msg->points[i].offset_time / double(1000000);
 
+                // 过滤近距离点
                 if ((abs(cloud_full_[i].x - cloud_full_[i - 1].x) > 1e-7) ||
                     (abs(cloud_full_[i].y - cloud_full_[i - 1].y) > 1e-7) ||
                     (abs(cloud_full_[i].z - cloud_full_[i - 1].z) > 1e-7) &&
