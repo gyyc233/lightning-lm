@@ -79,6 +79,7 @@ bool LidarLoc::Init(const std::string& config_path) {
 
     LOG(INFO) << "min init confidence: " << options_.min_init_confidence_;
 
+    // 动态点云策略：短期，长期，持久化
     std::string map_policy = yaml.GetValue<std::string>("maps", "dyn_cloud_policy");
     if (map_policy == "short") {
         options_.map_option_.policy_ = TiledMap::DynamicCloudPolicy::SHORT;
@@ -227,8 +228,8 @@ bool LidarLoc::YawSearch(SE3& pose, double& confidence, CloudPtr input, CloudPtr
     bool yaw_search_success = false;
 
     int step = lidar_loc::grid_search_angle_step;
-    double radius = lidar_loc::grid_search_angle_range * constant::kDEG2RAD;
-    double angle_search_step = 2 * radius / step;
+    double radius = lidar_loc::grid_search_angle_range * constant::kDEG2RAD; // 搜索半径
+    double angle_search_step = 2 * radius / step; // 搜索步长
 
     std::vector<double> searched_yaw;
     std::vector<double> scores(step);
@@ -244,12 +245,13 @@ bool LidarLoc::YawSearch(SE3& pose, double& confidence, CloudPtr input, CloudPtr
     LOG(INFO) << "init yaw: " << init_yaw << ", p: " << RPYXYZ.pitch << ", ro: " << RPYXYZ.roll << ", search from "
               << searched_yaw.front() << " to " << searched_yaw.back();
 
-    /// 粗分辨率
+    /// 粗分辨率 TODO: 这里是否能并行处理，同时确保Localize 线程安全
     std::for_each(index.begin(), index.end(), [&](int i) {
         double fitness_score = 0;
         RPYXYZ.yaw = searched_yaw[i];
         SE3 pose_esti = math::XYZRPYToSE3(RPYXYZ);
 
+        // 对每个候选偏航角执行定位并记录每个候选偏航角对应的得分
         Localize(pose_esti, fitness_score, input, output, true);
 
         scores[i] = fitness_score;
@@ -266,6 +268,7 @@ bool LidarLoc::YawSearch(SE3& pose, double& confidence, CloudPtr input, CloudPtr
         Localize(pose, confidence, input, output, false);
     }
 
+    // 若精细匹配结果满足要求
     if (confidence > options_.min_init_confidence_) {
         LOG(INFO) << "init success, score: " << confidence << ", th=" << options_.min_init_confidence_;
         Eigen::Vector3d suc_translation = pose.translation();
@@ -360,6 +363,7 @@ bool LidarLoc::TryOtherSolution(CloudPtr input, SE3& pose) {
 }
 
 bool LidarLoc::UpdateGlobalMap() {
+    // 更新全局地图的NDT与ICP配置
     NDTType::Ptr ndt(new NDTType());
     ndt->setResolution(1.0);
     ndt->setNeighborhoodSearchMethod(pclomp::DIRECT7);
@@ -373,6 +377,7 @@ bool LidarLoc::UpdateGlobalMap() {
     UL lock(match_mutex_);
     pcl_ndt_ = ndt;
 
+    // 若地图未初始化，使用粗分辨率(5.0)的NDT用于大范围搜索
     if (!loc_inited_) {
         NDTType::Ptr ndt_rough(new NDTType());
         ndt_rough->setResolution(5.0);
@@ -407,8 +412,9 @@ bool LidarLoc::UpdateGlobalMap() {
 void LidarLoc::UpdateMapThread() {
     LOG(INFO) << "UpdateMapThread thread is running";
     while (!update_map_quit_) {
+        // 检查静态地图与动态地图是否更新
         if (map_->MapUpdated() || map_->DynamicMapUpdated()) {
-            UpdateGlobalMap();
+            UpdateGlobalMap(); // 更新 NDT ICP 配置
 
             if (ui_) {
                 ui_->UpdatePointCloudGlobal(map_->GetStaticCloud());
@@ -422,6 +428,7 @@ void LidarLoc::UpdateMapThread() {
 }
 
 void LidarLoc::SetInitialPose(SE3 init_pose) {
+    // 设置lidar定位的初始位姿
     UL lock(initial_pose_mutex_);
     loc_inited_ = false;
     // map_->ClearMap();
@@ -547,6 +554,10 @@ void LidarLoc::Align(const CloudPtr& input) {
     if (lidar_loc_pose_queue_.size() >= 2) {
         SE3 pred;
         TimedPose match;
+        // PoseInterp 基于时间的位姿插值
+        // [](const TimedPose& p) { return p.timestamp_; } 提取时间戳
+        // [](const TimedPose& p) { return p.pose_; } 提取位姿
+        // pred 插值结果
         if (math::PoseInterp<TimedPose>(
                 current_time, lidar_loc_pose_queue_, [](const TimedPose& p) { return p.timestamp_; },
                 [](const TimedPose& p) { return p.pose_; }, pred, match, 2.0)) {
@@ -562,15 +573,17 @@ void LidarLoc::Align(const CloudPtr& input) {
     }
 
     bool try_dr = false;
+    // 比较来自DR与LO的位姿差异
     if (((guess_from_dr.translation() - guess_from_lo.translation()).norm() >= try_other_guess_trans_th_ ||
          (guess_from_dr.so3().inverse() * guess_from_lo.so3()).log().norm() >= try_other_guess_rot_th_)) {
         LOG(INFO) << "trying dr pose: " << guess_from_dr.translation().transpose() << ", "
                   << (guess_from_dr.so3().inverse() * guess_from_lo.so3()).log().norm()
                   << ", vel_norm: " << current_vel_b_.norm();
-        try_dr = true;
+        try_dr = true; // 差异过大则使用DR的位姿
     }
 
     bool try_self = false;
+    // 是否使用自身外推的姿态结果作为定位的初始猜测
     if (((guess_from_self.translation() - guess_from_lo.translation()).norm() >= try_other_guess_trans_th_ ||
          (guess_from_self.so3().inverse() * guess_from_lo.so3()).log().norm() >= try_other_guess_rot_th_) &&
         ((guess_from_dr.translation() - guess_from_self.translation()).norm() >= try_other_guess_trans_th_ ||
@@ -666,6 +679,7 @@ void LidarLoc::Align(const CloudPtr& input) {
     }
 
     if (loc_success) {
+        // 检查激光定位结果是否有效
         lidar_loc_odom_valid = CheckLidarOdomValid(current_pose_esti, delta_rel_abs_pose);
         last_timestamp_ = current_timestamp_;  // 成功时，更新上一时刻激光定位时间
         match_fail_count_ = 0;
@@ -679,6 +693,7 @@ void LidarLoc::Align(const CloudPtr& input) {
 
     /// 确定激光定位是否满足平滑性要求
     Vec3d dpred = current_abs_pose_.translation() - guess_from_self.translation();
+    // 旋转差异：旋转矩阵差异的log范数小于2.0度
     if (fabs(dpred[0]) < 0.5 && fabs(dpred[1]) < 0.5 &&
         (current_abs_pose_.so3().inverse() * guess_from_self.so3()).log().norm() < 2.0 * M_PI / 180.0) {
         localization_result_.lidar_loc_smooth_flag_ = true;
@@ -695,12 +710,15 @@ void LidarLoc::Align(const CloudPtr& input) {
         localization_result_.timestamp_ = current_timestamp_;
         localization_result_.confidence_ = fitness_score;
         if (match_fail_count_ < 100) {
+            // 连续失败次数小于100，则认为定位有效
             localization_result_.lidar_loc_valid_ = true;
             localization_result_.status_ = LocalizationStatus::GOOD;
         } else if (match_fail_count_ >= 100 && match_fail_count_ < 300) {
+            // 连续失败次数在 [100, 300)，跟随DR（航位推算）
             localization_result_.lidar_loc_valid_ = false;
             localization_result_.status_ = LocalizationStatus::FOLLOWING_DR;
         } else {
+            // 连续失败次数 ≥ 300，定位失效
             match_fail_count_ = 300;
             localization_result_.lidar_loc_valid_ = false;
             localization_result_.status_ = LocalizationStatus::FAIL;
@@ -732,6 +750,7 @@ void LidarLoc::Align(const CloudPtr& input) {
             CloudPtr input_z_filter(new PointCloudType());
             pass.filter(*input_z_filter);
 
+            // z轴过滤点云然后变换到全局坐标系
             if (!input_z_filter->empty()) {
                 CloudPtr cloud_t(new PointCloudType());
                 pcl::transformPointCloud(*input_z_filter, *cloud_t, current_pose_esti.matrix());
@@ -772,6 +791,8 @@ void LidarLoc::Align(const CloudPtr& input) {
 }
 
 bool LidarLoc::CheckLidarOdomValid(const SE3& current_pose_esti, double& delta_posi) {
+    // last_lo_pose_.inverse() * current_lo_pose_：从上一时刻到当前时刻的里程计预测相对位移
+    // last_abs_pose_.inverse() * current_pose_esti：从上一时刻到当前时刻的激光定位计算的相对位移
     delta_posi = ((last_lo_pose_.inverse() * current_lo_pose_).translation() -
                   (last_abs_pose_.inverse() * current_pose_esti).translation())
                      .head(2)
@@ -787,13 +808,13 @@ bool LidarLoc::CheckLidarOdomValid(const SE3& current_pose_esti, double& delta_p
         LOG(INFO) << "Lidar Loc计算相对pose: " << last_abs_pose_.translation().transpose() << " "
                   << current_pose_esti.translation().transpose() << " "
                   << (last_abs_pose_.inverse() * current_pose_esti).translation().transpose();
-        lo_reliable_ = false;
+        lo_reliable_ = false; // lidar 里程计不可靠
         lo_reliable_cnt_ = 10;
         valid = false;
     }
 
-    last_abs_pose_ = current_pose_esti;
-    last_lo_pose_ = current_lo_pose_;
+    last_abs_pose_ = current_pose_esti; // 激光定位位姿
+    last_lo_pose_ = current_lo_pose_; // 里程计预测位姿
     last_lo_pose_set_ = true;
     last_dr_pose_ = current_dr_pose_;
     last_dr_pose_set_ = true;
@@ -842,6 +863,8 @@ bool LidarLoc::Localize(SE3& pose, double& confidence, CloudPtr input, CloudPtr 
         voxel_icp.setLeafSize(ls, ls, ls);
         voxel_icp.setInputCloud(input);
         voxel_icp.filter(*input_voxel);
+
+        // ICP对齐
         pcl_icp_->setInputSource(input_voxel);
         Timer::Evaluate([&]() { pcl_icp_->align(*output, trans); }, "pcl_icp adjust", true);
         adjust_trans = pcl_icp_->getFinalTransformation();
@@ -858,7 +881,9 @@ bool LidarLoc::Localize(SE3& pose, double& confidence, CloudPtr input, CloudPtr 
         }
     }
 
+    // 将变换矩阵转换回双精度SE3姿态
     Eigen::Matrix3d rot = trans.block<3, 3>(0, 0).cast<double>();
+    // 归一化四元数确保单位长度
     Quatd q_3d = Quatd(rot);
     Vec3d t_3d = trans.block<3, 1>(0, 3).cast<double>();
     q_3d.normalize();
@@ -910,6 +935,7 @@ bool LidarLoc::AssignLOPose(double timestamp) {
     //               << lo_pose_queue_.back().pose_.translation().transpose();
     // }
 
+    // 根据输入的timestamp，从lo_pose_queue_中插值出对应的pose
     bool pose_interp_success = math::PoseInterp<NavState>(
         timestamp, lo_pose_queue_, [](const NavState& dr) { return dr.timestamp_; },
         [](const NavState& dr) { return dr.GetPose(); }, interp_pose, best_match, 5.0);
@@ -918,7 +944,9 @@ bool LidarLoc::AssignLOPose(double timestamp) {
         current_lo_pose_ = interp_pose;
         current_lo_pose_set_ = true;
 
+        // 更新提坐标系下的速度
         current_vel_b_ = best_match.GetRot().inverse() * best_match.GetVel();
+        // 更新世界坐标系下的速度
         current_vel_ = best_match.GetVel();
 
         // if (options_.with_height_) {
@@ -936,6 +964,8 @@ bool LidarLoc::AssignDRPose(double timestamp) {
     UL lock(dr_pose_mutex_);
     SE3 interp_pose;
     NavState best_match;
+
+    // 这里是从dr_pose_queue_中插值出对应的pose
     bool pose_interp_success = math::PoseInterp<NavState>(
         timestamp, dr_pose_queue_, [](const NavState& dr) { return dr.timestamp_; },
         [](const NavState& dr) { return dr.GetPose(); }, interp_pose, best_match, 5.0);

@@ -21,6 +21,8 @@ namespace lightning::loc {
 
 using FrameId = unsigned long;
 
+// 基于图优化 Pose Graph Optimization, PGO 的多元信息融合定位
+
 /**
  * 保存一个优化单元需要的所有观测信息
  */
@@ -45,7 +47,7 @@ struct PGOFrame {
     // common::UTMCoordinate rtk_utm_;    // 与PGO帧最接近的原始RTK观测
     // double rtk_chi2_ = 0.0;            // RTK卡方误差
 
-    // 激光定位观测 | 提供绝对约束
+    // lidar_loc 激光定位观测 | 提供绝对约束
     bool lidar_loc_set_ = false;                         // lidarLoc是否已经设置（PGO由lodarLoc触发，正常是有效的）
     bool lidar_loc_valid_ = false;                       // lidarLoc是否有效（只要设置了就有效）
     bool lidar_loc_inlier_ = true;                       // lidarLoc在PGO看来是否为inlier
@@ -57,7 +59,7 @@ struct PGOFrame {
     bool lidar_loc_trans_degenerated = false;            // 根据归一化权重来决定
     double lidar_loc_chi2_ = 0.0;                        // lidarLoc观测的卡方误差
 
-    // 激光里程计观测 | 提供帧间相对约束
+    // lidar_odom 激光里程计观测 | 提供帧间相对约束
     bool lidar_odom_set_ = false;                         // LO是否已经设置（由lidarLoc设置或者PGO中插值）
     bool lidar_odom_valid_ = false;                       // LO是否有效（只要设置了就是有效）
     SE3 lidar_odom_pose_;                                 // LO自系位姿观测
@@ -120,15 +122,20 @@ struct PGOImpl {
     PGOImpl(Options options = {});
     ~PGOImpl() {}
 
-    /// 总逻辑
+    /// 添加图优化帧
     void AddPGOFrame(std::shared_ptr<PGOFrame> frame);
 
     /// 为frame分配相对定位pose，如果已经有了就什么也不做。
     /// 注意有 lidarOdom pose 和 DR pose 两个；要求至少有一个，否则返回 false。
     // bool AssignRelativePoseIfNeeded(std::shared_ptr<PGOFrame> frame);
+
+    // 为帧分配激光里程计位姿
     bool AssignLidarOdomPoseIfNeeded(std::shared_ptr<PGOFrame> frame);
+
+    // 为帧分配DR位姿
     bool AssignDRPoseIfNeeded(std::shared_ptr<PGOFrame> frame);
 
+    // 更新帧的激光里程计位姿
     void UpdateLidarOdomStatusInFrame(NavState& lio_result, std::shared_ptr<PGOFrame> frame);
 
     /// 执行优化的逻辑

@@ -46,6 +46,8 @@
 
 #include "core/lightning_math.hpp"
 
+// 基于NTD的体素网格协方差类
+
 namespace pclomp {
 /** \brief A searchable voxel strucure containing the mean and covariance of the data.
  * \note For more information please see
@@ -56,6 +58,7 @@ namespace pclomp {
  */
 template <typename PointT>
 class VoxelGridCovariance : public pcl::VoxelGrid<PointT> {
+    // 继承自 pcl::VoxelGrid<PointT>，扩展了基础体素网格功能，添加协方差计算和存储
    protected:
     using pcl::VoxelGrid<PointT>::filter_name_;
     using pcl::VoxelGrid<PointT>::getClassName;
@@ -87,6 +90,7 @@ class VoxelGridCovariance : public pcl::VoxelGrid<PointT> {
 
     /** \brief Simple structure to hold a centroid, covarince and the number of points in a leaf.
      * Inverse covariance, eigen vectors and engen values are precomputed. */
+    // 保存质心，协方差，叶子中的点数，逆协方差，特征向量和特征值已经预先计算
     struct Leaf {
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
@@ -134,6 +138,7 @@ class VoxelGridCovariance : public pcl::VoxelGrid<PointT> {
     /** \brief Const pointer to VoxelGridCovariance leaf structure */
     typedef const Leaf *LeafConstPtr;
 
+    // 使用自定义哈希函数 hash_vec<3>
     using HashMap = std::unordered_map<Eigen::Vector3i, Leaf, lightning::math::hash_vec<3>>;
 
    public:
@@ -205,7 +210,7 @@ class VoxelGridCovariance : public pcl::VoxelGrid<PointT> {
     /// add a target point cloud into voxel grid
     void AddTarget(PointCloudPtr target);
 
-    /// compute the cov and inv cov of each grid, paralleled
+    /// compute the cov and inv cov of each grid, paralleled 并行计算每个网格的协方差和逆协方差
     void ComputeTargetGrids();
 
    protected:

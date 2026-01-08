@@ -55,11 +55,13 @@ int pclomp::VoxelGridCovariance<PointT>::getNeighborhoodAtPoint(const Eigen::Mat
     neighbors.clear();
 
     // Find displacement coordinates
+    // 计算参考点的体素键值
     auto key = Pt2Key(Eigen::Vector3f(reference_point.x, reference_point.y, reference_point.z));
     neighbors.reserve(relative_coordinates.cols());
 
     // Check each neighbor to see if it is occupied and contains sufficient points
     // Slower than radius search because needs to check 26 indices
+    // 查找参考点周围的体素
     for (int ni = 0; ni < relative_coordinates.cols(); ni++) {
         auto displacement = relative_coordinates.col(ni);
         // Checking if the specified cell is in the grid
@@ -90,6 +92,7 @@ int pclomp::VoxelGridCovariance<PointT>::getNeighborhoodAtPoint7(const PointT& r
                                                                  std::vector<LeafConstPtr>& neighbors) const {
     neighbors.clear();
 
+    // 7邻域
     Eigen::MatrixXi relative_coordinates(3, 7);
     relative_coordinates.setZero();
     relative_coordinates(0, 1) = 1;
@@ -113,14 +116,15 @@ int pclomp::VoxelGridCovariance<PointT>::getNeighborhoodAtPoint1(const PointT& r
 template <typename PointT>
 void pclomp::VoxelGridCovariance<PointT>::AddTarget(pclomp::VoxelGridCovariance<PointT>::PointCloudPtr target) {
     for (size_t cp = 0; cp < target->points.size(); ++cp) {
+        // 3D点坐标转换为对应的体素网格键值
         auto key = Pt2Key(target->points[cp].getVector3fMap());
 
         auto iter = leaves_.find(key);
         if (iter == leaves_.end()) {
-            Leaf l;
+            Leaf l; // 体素结构: 体素内点集合与体素内点的数量
             l.points_.emplace_back(target->points[cp].getVector3fMap());
             l.nr_points = 1;
-            leaves_.insert({key, l});
+            leaves_.insert({key, l}); // 存储体素的hash, key为体素坐标
         } else {
             auto& leaf = iter->second;
             leaf.points_.emplace_back(target->points[cp].getVector3fMap());
@@ -134,6 +138,7 @@ void pclomp::VoxelGridCovariance<PointT>::ComputeTargetGrids() {
     std::for_each(leaves_.begin(), leaves_.end(), [this](auto& it) {
         Leaf& leaf = it.second;
 
+        // 统计某个体素内的点信息
         for (auto& pt : leaf.points_) {
             Eigen::Vector3d pt3d(pt[0], pt[1], pt[2]);
             // Accumulate point sum for centroid calculation
@@ -146,6 +151,7 @@ void pclomp::VoxelGridCovariance<PointT>::ComputeTargetGrids() {
         }
 
         // Eigen values and vectors calculated to prevent near singluar matrices
+        // 计算特征值和特征向量以防止接近奇异矩阵
         Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigensolver;
         Eigen::Matrix3d eigen_val;
         Eigen::Vector3d pt_sum;
@@ -162,22 +168,25 @@ void pclomp::VoxelGridCovariance<PointT>::ComputeTargetGrids() {
         }
 
         // Single pass covariance calculation
+        // 单次遍历计算协方差计算，应用bessel矫正
         leaf.cov_ =
             (leaf.cov_ - 2 * (pt_sum * leaf.mean_.transpose())) / leaf.nr_points + leaf.mean_ * leaf.mean_.transpose();
         leaf.cov_ *= (leaf.nr_points - 1.0) / leaf.nr_points;
 
         // Normalize Eigen Val such that max no more than 100x min.
         eigensolver.compute(leaf.cov_);
+        // 计算特征值与特征向量
         eigen_val = eigensolver.eigenvalues().asDiagonal();
         auto evecs = eigensolver.eigenvectors();
 
+        // 检查是否有负特征值，确保矩阵正定
         if (eigen_val(0, 0) < 0 || eigen_val(1, 1) < 0 || eigen_val(2, 2) <= 0) {
             leaf.nr_points = -1;
             return;
         }
 
         // Avoids matrices near singularities (eq 6.11)[Magnusson 2009]
-
+        // 避免接近奇异矩阵，通过设置最小特征值阈值
         min_covar_eigvalue = min_covar_eigvalue_mult_ * eigen_val(2, 2);
         if (eigen_val(0, 0) < min_covar_eigvalue) {
             eigen_val(0, 0) = min_covar_eigvalue;
@@ -190,6 +199,7 @@ void pclomp::VoxelGridCovariance<PointT>::ComputeTargetGrids() {
         }
 
         leaf.icov_ = leaf.cov_.inverse();
+        // 计算信息矩阵（协方差矩阵逆，若包含无穷大则标记该体素无效）
         if (leaf.icov_.maxCoeff() == std::numeric_limits<float>::infinity() ||
             leaf.icov_.minCoeff() == -std::numeric_limits<float>::infinity()) {
             leaf.nr_points = -1;
@@ -197,5 +207,7 @@ void pclomp::VoxelGridCovariance<PointT>::ComputeTargetGrids() {
     });
 }
 
+// 为指定点类型T显式实例化 pcl::VoxelGridCovariance 模板类
+// PCL_EXPORTS：PCL库的导出宏，用于处理Windows DLL导入/导出
 #define PCL_INSTANTIATE_VoxelGridCovariance(T) template class PCL_EXPORTS pcl::VoxelGridCovariance<T>;
 #endif  // PCL_VOXEL_GRID_COVARIANCE_IMPL_H_
