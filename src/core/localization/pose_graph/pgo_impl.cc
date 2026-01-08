@@ -57,12 +57,12 @@ PGOImpl::PGOImpl(Options options) {
     set6dnoise(lidar_odom_rel_noise_, options_.lidar_odom_pos_noise, options_.lidar_odom_ang_noise);
     set6dnoise(dr_rel_noise_, options_.dr_pos_noise, options_.dr_ang_noise);
 
-    // Setup solver
+    // Setup solver 优化器类型配置: LM算法，稀疏矩阵求解
     miao::OptimizerConfig config(miao::AlgorithmType::LEVENBERG_MARQUARDT,
                                  miao::LinearSolverType::LINEAR_SOLVER_SPARSE_EIGEN, false);
     config.incremental_mode_ = true;
-    config.max_vertex_size_ = options_.PGO_MAX_FRAMES;
-    optimizer_ = miao::SetupOptimizer<6, 3>(config);
+    config.max_vertex_size_ = options_.PGO_MAX_FRAMES; // 最大顶点数
+    optimizer_ = miao::SetupOptimizer<6, 3>(config); // 创建6自由度，3维的优化器
 }
 
 bool PGOImpl::Reset() {
@@ -90,6 +90,7 @@ void PGOImpl::AddPGOFrame(std::shared_ptr<PGOFrame> pgo_frame) {
         LOG(INFO) << "inserting pgo frame, it's timestamp is " << std::setprecision(18) << pgo_frame->timestamp_;
     }
 
+    // 尝试从LO和航行推算中获取相对位姿观测
     // 这里尝试设置相对位姿观测，如果上游（通常是激光定位）给了就跳过；
     // 如果 LidarOdom 和 DR 都设置失败，结束本函数。
     bool interp_lio_success = AssignLidarOdomPoseIfNeeded(pgo_frame);
@@ -99,6 +100,7 @@ void PGOImpl::AddPGOFrame(std::shared_ptr<PGOFrame> pgo_frame) {
         return;
     }
 
+    // 激光定位是否有效
     is_in_map_ = pgo_frame->lidar_loc_set_ && pgo_frame->lidar_loc_valid_;
     if (!is_in_map_) {
         //
@@ -107,9 +109,9 @@ void PGOImpl::AddPGOFrame(std::shared_ptr<PGOFrame> pgo_frame) {
         return;
     }
 
-    pgo_frame->frame_id_ = accumulated_frame_id_++;
-    current_frame_ = pgo_frame;
-    frames_by_id_.emplace(pgo_frame->frame_id_, pgo_frame);
+    pgo_frame->frame_id_ = accumulated_frame_id_++; // 分配唯一帧ID
+    current_frame_ = pgo_frame; // 更新当前帧指针
+    frames_by_id_.emplace(pgo_frame->frame_id_, pgo_frame); // 维护ID到帧的映射
 
     // 由于到达时间可能不一致，最好是插到正确的位置（仅限多线程，单线程没这问题）
     // 2023-02-16：在唯一触发源唯一的情况下，无需考虑到达时间不一致问题
@@ -151,7 +153,9 @@ bool PGOImpl::AssignLidarOdomPoseIfNeeded(std::shared_ptr<PGOFrame> frame) {
 
     // 如果PGOFrame中还没有设置LO插值位姿，设置它。
     if (!frame->lidar_odom_set_) {
+        // 插值成功
         if (lo_interp_done) {
+            // 将世界坐标系下的速度转为体坐标系速度
             interp_vel_b = best_match.GetRot().matrix().transpose() * best_match.GetVel();
             frame->lidar_odom_set_ = true;
             frame->lidar_odom_valid_ = true;
